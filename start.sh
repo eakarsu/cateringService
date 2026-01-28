@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Load environment variables from .env file if it exists
+if [ -f ".env" ]; then
+  set -a
+  source .env
+  set +a
+fi
+
 BACKEND_PORT="${BACKEND_PORT:-5001}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 DB_NAME="catering_service"
@@ -92,8 +99,8 @@ else
 DATABASE_URL="${DATABASE_URL}"
 JWT_SECRET="your-super-secret-jwt-key-change-in-production"
 PORT=${BACKEND_PORT}
-OPENROUTER_API_KEY="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"
-OPENROUTER_MODEL="anthropic/claude-haiku-4.5"
+OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
+OPENROUTER_MODEL="${OPENROUTER_MODEL:-}"
 EOF
 fi
 echo "Backend .env file updated."
