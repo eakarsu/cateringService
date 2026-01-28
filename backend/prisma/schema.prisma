@@ -1,0 +1,698 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String       @id @default(uuid())
+  email           String       @unique
+  password        String
+  name            String
+  role            UserRole     @default(STAFF)
+  phone           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  aiChats         AIChat[]
+  events          Event[]
+  invoicesCreated Invoice[]
+  orders          Order[]
+  proposals       Proposal[]
+  staffProfile    Staff?
+  uploadedPhotos  EventPhoto[]
+}
+
+model Event {
+  id                String             @id @default(uuid())
+  name              String
+  eventType         EventType          @default(CORPORATE)
+  date              DateTime
+  startTime         DateTime
+  endTime           DateTime
+  guestCount        Int
+  status            EventStatus        @default(INQUIRY)
+  notes             String?
+  setupRequirements String?
+  equipmentNeeds    String?
+  venueId           String?
+  clientId          String
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  deliveries        Delivery[]
+  equipmentBookings EquipmentBooking[]
+  client            User               @relation(fields: [clientId], references: [id])
+  venue             Venue?             @relation(fields: [venueId], references: [id])
+  timeline          EventTimeline[]
+  invoices          Invoice[]
+  orders            Order[]
+  proposals         Proposal[]
+  staffAssignments  StaffAssignment[]
+  guests            Guest[]
+  photos            EventPhoto[]
+}
+
+model Venue {
+  id           String   @id @default(uuid())
+  name         String
+  address      String
+  city         String
+  state        String
+  zipCode      String
+  capacity     Int
+  contactName  String?
+  contactPhone String?
+  contactEmail String?
+  notes        String?
+  hasKitchen   Boolean  @default(false)
+  parkingInfo  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  events       Event[]
+}
+
+model EventTimeline {
+  id        String   @id @default(uuid())
+  eventId   String
+  time      DateTime
+  activity  String
+  notes     String?
+  completed Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+model Guest {
+  id             String   @id @default(uuid())
+  eventId        String
+  name           String
+  email          String?
+  phone          String?
+  isVegetarian   Boolean  @default(false)
+  isVegan        Boolean  @default(false)
+  isGlutenFree   Boolean  @default(false)
+  isDairyFree    Boolean  @default(false)
+  isNutFree      Boolean  @default(false)
+  otherAllergies String?
+  mealPreference String?
+  notes          String?
+  rsvpStatus     String   @default("PENDING")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  event          Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+model Supplier {
+  id             String          @id @default(uuid())
+  name           String
+  contactName    String?
+  email          String?
+  phone          String?
+  address        String?
+  category       String
+  notes          String?
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  purchaseOrders PurchaseOrder[]
+}
+
+model PurchaseOrder {
+  id           String              @id @default(uuid())
+  orderNumber  String              @unique
+  supplierId   String
+  status       String              @default("DRAFT")
+  orderDate    DateTime            @default(now())
+  expectedDate DateTime?
+  totalAmount  Float               @default(0)
+  notes        String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  items        PurchaseOrderItem[]
+  supplier     Supplier            @relation(fields: [supplierId], references: [id])
+}
+
+model PurchaseOrderItem {
+  id              String        @id @default(uuid())
+  purchaseOrderId String
+  ingredientId    String?
+  description     String
+  quantity        Float
+  unit            String
+  unitPrice       Float
+  total           Float
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+}
+
+model EventPhoto {
+  id         String   @id @default(uuid())
+  eventId    String
+  filename   String
+  url        String
+  caption    String?
+  uploadedBy String
+  uploadedAt DateTime @default(now())
+  isPublic   Boolean  @default(false)
+  event      Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  uploader   User     @relation(fields: [uploadedBy], references: [id])
+}
+
+model MenuPackage {
+  id             String            @id @default(uuid())
+  name           String
+  description    String?
+  pricePerPerson Float
+  costPerPerson  Float             @default(0)
+  minGuests      Int               @default(10)
+  maxGuests      Int?
+  category       MenuCategory      @default(BUFFET)
+  isActive       Boolean           @default(true)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  items          MenuPackageItem[]
+  orders         Order[]
+  proposals      ProposalMenu[]
+}
+
+model MenuItem {
+  id           String            @id @default(uuid())
+  name         String
+  description  String?
+  price        Float
+  costPrice    Float             @default(0)
+  category     String
+  isVegetarian Boolean           @default(false)
+  isVegan      Boolean           @default(false)
+  isGlutenFree Boolean           @default(false)
+  isDairyFree  Boolean           @default(false)
+  isNutFree    Boolean           @default(false)
+  allergens    String?
+  isActive     Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  packageItems MenuPackageItem[]
+  orderItems   OrderItem[]
+  recipes      Recipe[]
+}
+
+model MenuPackageItem {
+  id         String      @id @default(uuid())
+  packageId  String
+  menuItemId String
+  quantity   Int         @default(1)
+  isRequired Boolean     @default(true)
+  menuItem   MenuItem    @relation(fields: [menuItemId], references: [id])
+  package    MenuPackage @relation(fields: [packageId], references: [id], onDelete: Cascade)
+}
+
+model Proposal {
+  id           String             @id @default(uuid())
+  eventId      String
+  createdById  String
+  status       ProposalStatus     @default(DRAFT)
+  totalAmount  Float
+  validUntil   DateTime
+  notes        String?
+  signatureUrl String?
+  signedAt     DateTime?
+  signedBy     String?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  createdBy    User               @relation(fields: [createdById], references: [id])
+  event        Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  lineItems    ProposalLineItem[]
+  menus        ProposalMenu[]
+}
+
+model ProposalMenu {
+  id             String      @id @default(uuid())
+  proposalId     String
+  packageId      String
+  guestCount     Int
+  pricePerPerson Float
+  notes          String?
+  package        MenuPackage @relation(fields: [packageId], references: [id])
+  proposal       Proposal    @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+}
+
+model ProposalLineItem {
+  id          String   @id @default(uuid())
+  proposalId  String
+  description String
+  quantity    Int      @default(1)
+  unitPrice   Float
+  total       Float
+  category    String?
+  proposal    Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+}
+
+model Order {
+  id              String       @id @default(uuid())
+  orderNumber     String       @unique
+  eventId         String
+  clientId        String
+  packageId       String?
+  status          OrderStatus  @default(PENDING)
+  guestCount      Int
+  finalHeadcount  Int?
+  specialRequests String?
+  internalNotes   String?
+  totalAmount     Float
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  client          User         @relation(fields: [clientId], references: [id])
+  event           Event        @relation(fields: [eventId], references: [id])
+  package         MenuPackage? @relation(fields: [packageId], references: [id])
+  items           OrderItem[]
+  packLists       PackList[]
+  prepLists       PrepList[]
+}
+
+model OrderItem {
+  id          String   @id @default(uuid())
+  orderId     String
+  menuItemId  String
+  quantity    Int
+  unitPrice   Float
+  notes       String?
+  dietaryMods String?
+  menuItem    MenuItem @relation(fields: [menuItemId], references: [id])
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+}
+
+model Recipe {
+  id           String             @id @default(uuid())
+  menuItemId   String
+  name         String
+  instructions String
+  prepTime     Int
+  cookTime     Int
+  servings     Int
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  menuItem     MenuItem           @relation(fields: [menuItemId], references: [id])
+  ingredients  RecipeIngredient[]
+}
+
+model Ingredient {
+  id                String             @id @default(uuid())
+  name              String
+  unit              String
+  costPerUnit       Float
+  supplier          String?
+  parLevel          Float?
+  currentStock      Float              @default(0)
+  category          String?
+  isActive          Boolean            @default(true)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  inventoryLogs     InventoryLog[]
+  recipeIngredients RecipeIngredient[]
+}
+
+model RecipeIngredient {
+  id           String     @id @default(uuid())
+  recipeId     String
+  ingredientId String
+  quantity     Float
+  unit         String
+  notes        String?
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+  recipe       Recipe     @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+}
+
+model PrepList {
+  id         String         @id @default(uuid())
+  orderId    String
+  date       DateTime
+  status     PrepStatus     @default(PENDING)
+  assignedTo String?
+  notes      String?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  order      Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  items      PrepListItem[]
+}
+
+model PrepListItem {
+  id          String    @id @default(uuid())
+  prepListId  String
+  task        String
+  quantity    String?
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+  notes       String?
+  prepList    PrepList  @relation(fields: [prepListId], references: [id], onDelete: Cascade)
+}
+
+model PackList {
+  id        String         @id @default(uuid())
+  orderId   String
+  status    PrepStatus     @default(PENDING)
+  packedBy  String?
+  checkedBy String?
+  notes     String?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  order     Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  items     PackListItem[]
+}
+
+model PackListItem {
+  id         String   @id @default(uuid())
+  packListId String
+  item       String
+  quantity   Int
+  packed     Boolean  @default(false)
+  notes      String?
+  packList   PackList @relation(fields: [packListId], references: [id], onDelete: Cascade)
+}
+
+model InventoryLog {
+  id           String     @id @default(uuid())
+  ingredientId String
+  type         String
+  quantity     Float
+  notes        String?
+  createdAt    DateTime   @default(now())
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+}
+
+model Vehicle {
+  id           String     @id @default(uuid())
+  name         String
+  type         String
+  licensePlate String?
+  capacity     String?
+  isAvailable  Boolean    @default(true)
+  notes        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  deliveries   Delivery[]
+}
+
+model Delivery {
+  id              String         @id @default(uuid())
+  eventId         String
+  vehicleId       String?
+  scheduledTime   DateTime
+  actualDeparture DateTime?
+  actualArrival   DateTime?
+  status          DeliveryStatus @default(SCHEDULED)
+  driverName      String?
+  routeNotes      String?
+  setupCrew       String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  event           Event          @relation(fields: [eventId], references: [id])
+  vehicle         Vehicle?       @relation(fields: [vehicleId], references: [id])
+}
+
+model Equipment {
+  id          String             @id @default(uuid())
+  name        String
+  category    String
+  quantity    Int
+  available   Int
+  description String?
+  notes       String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  bookings    EquipmentBooking[]
+}
+
+model EquipmentBooking {
+  id          String    @id @default(uuid())
+  equipmentId String
+  eventId     String
+  quantity    Int
+  pickedUp    Boolean   @default(false)
+  returned    Boolean   @default(false)
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  equipment   Equipment @relation(fields: [equipmentId], references: [id])
+  event       Event     @relation(fields: [eventId], references: [id])
+}
+
+model Staff {
+  id               String            @id @default(uuid())
+  userId           String            @unique
+  position         String
+  hourlyRate       Float
+  skills           String?
+  uniformSize      String?
+  availability     String?
+  emergencyContact String?
+  emergencyPhone   String?
+  notes            String?
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  user             User              @relation(fields: [userId], references: [id])
+  assignments      StaffAssignment[]
+  timeEntries      TimeEntry[]
+}
+
+model StaffAssignment {
+  id        String   @id @default(uuid())
+  staffId   String
+  eventId   String
+  role      String
+  startTime DateTime
+  endTime   DateTime
+  confirmed Boolean  @default(false)
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  event     Event    @relation(fields: [eventId], references: [id])
+  staff     Staff    @relation(fields: [staffId], references: [id])
+}
+
+model TimeEntry {
+  id           String    @id @default(uuid())
+  staffId      String
+  date         DateTime
+  clockIn      DateTime
+  clockOut     DateTime?
+  breakMinutes Int       @default(0)
+  totalHours   Float?
+  notes        String?
+  approved     Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  staff        Staff     @relation(fields: [staffId], references: [id])
+}
+
+model Invoice {
+  id            String            @id @default(uuid())
+  invoiceNumber String            @unique
+  eventId       String
+  createdById   String
+  type          InvoiceType       @default(FINAL)
+  status        InvoiceStatus     @default(DRAFT)
+  subtotal      Float
+  taxRate       Float             @default(0)
+  taxAmount     Float             @default(0)
+  gratuity      Float             @default(0)
+  total         Float
+  dueDate       DateTime
+  notes         String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  createdBy     User              @relation(fields: [createdById], references: [id])
+  event         Event             @relation(fields: [eventId], references: [id])
+  lineItems     InvoiceLineItem[]
+  payments      Payment[]
+}
+
+model InvoiceLineItem {
+  id          String  @id @default(uuid())
+  invoiceId   String
+  description String
+  quantity    Int     @default(1)
+  unitPrice   Float
+  total       Float
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+model Payment {
+  id         String        @id @default(uuid())
+  invoiceId  String
+  amount     Float
+  method     PaymentMethod
+  reference  String?
+  notes      String?
+  receivedAt DateTime      @default(now())
+  createdAt  DateTime      @default(now())
+  invoice    Invoice       @relation(fields: [invoiceId], references: [id])
+}
+
+model AIChat {
+  id        String   @id @default(uuid())
+  userId    String
+  feature   String
+  messages  Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model CostEstimate {
+  id                 String                 @id @default(uuid())
+  name               String
+  eventId            String?
+  guestCount         Int
+  packageId          String?
+  profitMarginPercent Float
+  overheadPercent    Float
+  taxRate            Float
+  laborCostPerHour   Float
+  foodCost           Float
+  laborCost          Float
+  equipmentCost      Float
+  additionalCost     Float
+  overheadAmount     Float
+  subtotal           Float
+  profitAmount       Float
+  taxAmount          Float
+  totalAmount        Float
+  pricePerPerson     Float
+  staffDetails       Json?
+  additionalDetails  Json?
+  notes              String?
+  status             EstimateStatus         @default(DRAFT)
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+}
+
+enum EstimateStatus {
+  DRAFT
+  FINAL
+  CONVERTED_TO_PROPOSAL
+  ARCHIVED
+}
+
+model CalendarSync {
+  id           String    @id @default(uuid())
+  provider     String
+  accessToken  String?
+  refreshToken String?
+  calendarId   String?
+  lastSync     DateTime?
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model PaymentIntegration {
+  id            String   @id @default(uuid())
+  provider      String
+  apiKey        String?
+  webhookSecret String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  STAFF
+  CLIENT
+}
+
+enum EventType {
+  WEDDING
+  CORPORATE
+  BIRTHDAY
+  ANNIVERSARY
+  GRADUATION
+  HOLIDAY
+  FUNDRAISER
+  OTHER
+}
+
+enum EventStatus {
+  INQUIRY
+  PROPOSAL_SENT
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum MenuCategory {
+  BUFFET
+  PLATED
+  COCKTAIL
+  BBQ
+  BREAKFAST
+  LUNCH
+  DINNER
+  DESSERT
+}
+
+enum ProposalStatus {
+  DRAFT
+  SENT
+  VIEWED
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  IN_PREP
+  READY
+  IN_TRANSIT
+  DELIVERED
+  COMPLETED
+  CANCELLED
+}
+
+enum PrepStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum DeliveryStatus {
+  SCHEDULED
+  LOADING
+  IN_TRANSIT
+  ARRIVED
+  SETUP_COMPLETE
+  RETURNED
+}
+
+enum InvoiceType {
+  DEPOSIT
+  PROGRESS
+  FINAL
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  VIEWED
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  CHECK
+  CREDIT_CARD
+  BANK_TRANSFER
+  VENMO
+  ZELLE
+  OTHER
+}

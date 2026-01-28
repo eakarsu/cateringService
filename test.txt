@@ -1,0 +1,53 @@
+To test the new features, first start the application:
+
+  cd /Users/erolakarsu/projects/cateringService
+  ./start.sh
+
+  Then open http://localhost:3000 in your browser.
+
+  Login
+
+  Use the Demo Login buttons on the login page:
+  - Click "Use Demo Login (Admin)" or any account card to auto-fill credentials
+  - Click "Sign In"
+
+  New Features to Test
+  Feature: Guests
+  Navigation: Sidebar → "Guests"
+  What to Test: Add guests with dietary restrictions, view summary
+  ────────────────────────────────────────
+  Feature: Suppliers
+  Navigation: Sidebar → "Suppliers"
+  What to Test: Add suppliers, create purchase orders
+  ────────────────────────────────────────
+  Feature: Cost Estimator
+  Navigation: Sidebar → "Cost Estimator"
+  What to Test: Calculate event costs with profit margins
+  ────────────────────────────────────────
+  Feature: Client Portal
+  Navigation: Sidebar → "Client Portal"
+  What to Test: View client's events (login as client user)
+  ────────────────────────────────────────
+  Feature: Kitchen Scaling
+  Navigation: Sidebar → "Kitchen" → "Scaling Calculator" tab
+  What to Test: Scale recipes/packages by guest count
+  ────────────────────────────────────────
+  Feature: AI Timeline
+  Navigation: Sidebar → "AI Assistant" → Select "Timeline Generator"
+  What to Test: Generate event checklists
+  ────────────────────────────────────────
+  Feature: Event Photos
+  Navigation: Click any event → "Photos" tab
+  What to Test: Upload and view photos
+  ────────────────────────────────────────
+  Feature: Event Guests
+  Navigation: Click any event → "Guests" tab
+  What to Test: View guest list and dietary summary
+  Quick Test Path
+
+  1. Login → Click "Use Demo Login (Admin)" → Sign In
+  2. Guests → Click "Guests" in sidebar → Click "New Guest" → Fill form with dietary options
+  3. Suppliers → Click "Suppliers" → Click "New Supplier" → Add vendor info
+  4. Cost Estimator → Enter guest count, select package, adjust profit margin
+  5. Kitchen Scaling → Go to Kitchen → Click "Scaling Calculator" tab → Select recipe and guest count →
+  Click "Scale Recipe"
