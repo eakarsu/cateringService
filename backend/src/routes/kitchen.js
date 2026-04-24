@@ -1,12 +1,21 @@
 const express = require('express');
 const router = express.Router();
+const { authenticate, authorize } = require('../middleware/auth');
+const { validatePagination } = require('../middleware/validate');
 
 // ==================== PREP LISTS ====================
 
 // Get all prep lists
-router.get('/prep-lists', async (req, res) => {
+router.get('/prep-lists', authenticate, async (req, res, next) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const skip = (page - 1) * limit;
+    const search = req.query.search || '';
+    const sortBy = req.query.sortBy || 'date';
+    const sortOrder = req.query.sortOrder || 'asc';
     const { status, date, orderId } = req.query;
+
     const where = {};
     if (status) where.status = status;
     if (orderId) where.orderId = orderId;
@@ -17,19 +26,29 @@ router.get('/prep-lists', async (req, res) => {
       endOfDay.setHours(23, 59, 59, 999);
       where.date = { gte: startOfDay, lte: endOfDay };
     }
+    if (search) {
+      where.OR = [
+        { assignedTo: { contains: search, mode: 'insensitive' } },
+        { order: { event: { name: { contains: search, mode: 'insensitive' } } } }
+      ];
+    }
 
-    const prepLists = await req.prisma.prepList.findMany({
-      where,
-      include: {
-        order: { include: { event: { select: { name: true, date: true } } } },
-        items: true
-      },
-      orderBy: { date: 'asc' }
-    });
-    res.json(prepLists);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    const [prepLists, total] = await Promise.all([
+      req.prisma.prepList.findMany({
+        where,
+        include: {
+          order: { include: { event: { select: { name: true, date: true } } } },
+          items: true
+        },
+        orderBy: { [sortBy]: sortOrder },
+        skip,
+        take: limit
+      }),
+      req.prisma.prepList.count({ where })
+    ]);
+
+    res.json({ data: prepLists, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  } catch (error) { next(error); }
 });
 
 // Get prep list by ID
@@ -52,7 +71,7 @@ router.get('/prep-lists/:id', async (req, res) => {
 });
 
 // Create prep list
-router.post('/prep-lists', async (req, res) => {
+router.post('/prep-lists', authenticate, async (req, res) => {
   try {
     const { orderId, date, assignedTo, notes, items } = req.body;
 
@@ -79,7 +98,7 @@ router.post('/prep-lists', async (req, res) => {
 });
 
 // Update prep list
-router.put('/prep-lists/:id', async (req, res) => {
+router.put('/prep-lists/:id', authenticate, async (req, res) => {
   try {
     const { status, assignedTo, notes } = req.body;
 
@@ -95,7 +114,7 @@ router.put('/prep-lists/:id', async (req, res) => {
 });
 
 // Delete prep list
-router.delete('/prep-lists/:id', async (req, res) => {
+router.delete('/prep-lists/:id', authenticate, async (req, res) => {
   try {
     await req.prisma.prepList.delete({ where: { id: req.params.id } });
     res.json({ message: 'Prep list deleted' });
@@ -245,19 +264,39 @@ router.put('/pack-lists/:id/items/:itemId', async (req, res) => {
 // ==================== RECIPES ====================
 
 // Get all recipes
-router.get('/recipes', async (req, res) => {
+router.get('/recipes', authenticate, async (req, res, next) => {
   try {
-    const recipes = await req.prisma.recipe.findMany({
-      include: {
-        menuItem: { select: { name: true, category: true } },
-        ingredients: { include: { ingredient: true } }
-      },
-      orderBy: { name: 'asc' }
-    });
-    res.json(recipes);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const skip = (page - 1) * limit;
+    const search = req.query.search || '';
+    const sortBy = req.query.sortBy || 'name';
+    const sortOrder = req.query.sortOrder || 'asc';
+
+    const where = {};
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { menuItem: { name: { contains: search, mode: 'insensitive' } } }
+      ];
+    }
+
+    const [recipes, total] = await Promise.all([
+      req.prisma.recipe.findMany({
+        where,
+        include: {
+          menuItem: { select: { name: true, category: true } },
+          ingredients: { include: { ingredient: true } }
+        },
+        orderBy: { [sortBy]: sortOrder },
+        skip,
+        take: limit
+      }),
+      req.prisma.recipe.count({ where })
+    ]);
+
+    res.json({ data: recipes, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  } catch (error) { next(error); }
 });
 
 // Get recipe by ID
@@ -280,7 +319,7 @@ router.get('/recipes/:id', async (req, res) => {
 });
 
 // Create recipe
-router.post('/recipes', async (req, res) => {
+router.post('/recipes', authenticate, async (req, res) => {
   try {
     const { menuItemId, name, instructions, prepTime, cookTime, servings, ingredients } = req.body;
 
@@ -310,7 +349,7 @@ router.post('/recipes', async (req, res) => {
 });
 
 // Update recipe
-router.put('/recipes/:id', async (req, res) => {
+router.put('/recipes/:id', authenticate, async (req, res) => {
   try {
     const { name, instructions, prepTime, cookTime, servings } = req.body;
 
@@ -334,16 +373,34 @@ router.put('/recipes/:id', async (req, res) => {
 // ==================== INGREDIENTS ====================
 
 // Get all ingredients
-router.get('/ingredients', async (req, res) => {
+router.get('/ingredients', authenticate, async (req, res, next) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const skip = (page - 1) * limit;
+    const search = req.query.search || '';
+    const sortBy = req.query.sortBy || 'name';
+    const sortOrder = req.query.sortOrder || 'asc';
     const { category, lowStock } = req.query;
+
     const where = { isActive: true };
     if (category) where.category = category;
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { category: { contains: search, mode: 'insensitive' } }
+      ];
+    }
 
-    let ingredients = await req.prisma.ingredient.findMany({
-      where,
-      orderBy: [{ category: 'asc' }, { name: 'asc' }]
-    });
+    let [ingredients, total] = await Promise.all([
+      req.prisma.ingredient.findMany({
+        where,
+        orderBy: { [sortBy]: sortOrder },
+        skip,
+        take: limit
+      }),
+      req.prisma.ingredient.count({ where })
+    ]);
 
     if (lowStock === 'true') {
       ingredients = ingredients.filter(ing =>
@@ -351,10 +408,8 @@ router.get('/ingredients', async (req, res) => {
       );
     }
 
-    res.json(ingredients);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    res.json({ data: ingredients, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  } catch (error) { next(error); }
 });
 
 // Get ingredient by ID
@@ -377,7 +432,7 @@ router.get('/ingredients/:id', async (req, res) => {
 });
 
 // Create ingredient
-router.post('/ingredients', async (req, res) => {
+router.post('/ingredients', authenticate, async (req, res) => {
   try {
     const { name, unit, costPerUnit, supplier, parLevel, currentStock, category } = req.body;
 
@@ -399,7 +454,7 @@ router.post('/ingredients', async (req, res) => {
 });
 
 // Update ingredient
-router.put('/ingredients/:id', async (req, res) => {
+router.put('/ingredients/:id', authenticate, async (req, res) => {
   try {
     const { name, unit, costPerUnit, supplier, parLevel, currentStock, category, isActive } = req.body;
 
@@ -796,6 +851,125 @@ router.post('/scale-package', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// Bulk delete recipes
+router.post('/recipes/bulk-delete', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.recipe.deleteMany({ where: { id: { in: ids } } });
+    res.json({ message: `${ids.length} recipes deleted` });
+  } catch (error) { next(error); }
+});
+
+// Bulk update recipes
+router.put('/recipes/bulk-update', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids, data } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.recipe.updateMany({ where: { id: { in: ids } }, data });
+    res.json({ message: `${ids.length} recipes updated` });
+  } catch (error) { next(error); }
+});
+
+// Bulk delete ingredients
+router.post('/ingredients/bulk-delete', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.ingredient.deleteMany({ where: { id: { in: ids } } });
+    res.json({ message: `${ids.length} ingredients deleted` });
+  } catch (error) { next(error); }
+});
+
+// Bulk update ingredients
+router.put('/ingredients/bulk-update', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids, data } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.ingredient.updateMany({ where: { id: { in: ids } }, data });
+    res.json({ message: `${ids.length} ingredients updated` });
+  } catch (error) { next(error); }
+});
+
+// Bulk delete prep lists
+router.post('/prep-lists/bulk-delete', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.prepList.deleteMany({ where: { id: { in: ids } } });
+    res.json({ message: `${ids.length} prep lists deleted` });
+  } catch (error) { next(error); }
+});
+
+// Bulk update prep lists
+router.put('/prep-lists/bulk-update', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids, data } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.prepList.updateMany({ where: { id: { in: ids } }, data });
+    res.json({ message: `${ids.length} prep lists updated` });
+  } catch (error) { next(error); }
+});
+
+// Export recipes for PDF
+router.get('/recipes/export/pdf', authenticate, async (req, res, next) => {
+  try {
+    const recipes = await req.prisma.recipe.findMany({
+      include: { menuItem: { select: { name: true } } },
+      orderBy: { name: 'asc' }
+    });
+    const exportData = recipes.map(r => ({
+      name: r.name,
+      menuItem: r.menuItem?.name || '',
+      prepTime: r.prepTime,
+      cookTime: r.cookTime,
+      servings: r.servings
+    }));
+    res.json({ title: 'Recipes Report', columns: ['Name', 'Menu Item', 'Prep Time', 'Cook Time', 'Servings'], rows: exportData });
+  } catch (error) { next(error); }
+});
+
+// Export ingredients for PDF
+router.get('/ingredients/export/pdf', authenticate, async (req, res, next) => {
+  try {
+    const ingredients = await req.prisma.ingredient.findMany({
+      where: { isActive: true },
+      orderBy: [{ category: 'asc' }, { name: 'asc' }]
+    });
+    const exportData = ingredients.map(i => ({
+      name: i.name,
+      category: i.category || '',
+      unit: i.unit,
+      costPerUnit: i.costPerUnit,
+      currentStock: i.currentStock,
+      parLevel: i.parLevel || '',
+      supplier: i.supplier || ''
+    }));
+    res.json({ title: 'Ingredients Report', columns: ['Name', 'Category', 'Unit', 'Cost/Unit', 'Stock', 'Par Level', 'Supplier'], rows: exportData });
+  } catch (error) { next(error); }
+});
+
+// Export prep lists for PDF
+router.get('/prep-lists/export/pdf', authenticate, async (req, res, next) => {
+  try {
+    const prepLists = await req.prisma.prepList.findMany({
+      include: {
+        order: { include: { event: { select: { name: true } } } },
+        items: true
+      },
+      orderBy: { date: 'desc' }
+    });
+    const exportData = prepLists.map(p => ({
+      event: p.order?.event?.name || '',
+      date: p.date,
+      assignedTo: p.assignedTo || '',
+      status: p.status,
+      itemCount: p.items?.length || 0
+    }));
+    res.json({ title: 'Prep Lists Report', columns: ['Event', 'Date', 'Assigned To', 'Status', 'Items'], rows: exportData });
+  } catch (error) { next(error); }
 });
 
 module.exports = router;

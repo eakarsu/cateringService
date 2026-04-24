@@ -1,30 +1,50 @@
 const express = require('express');
 const router = express.Router();
+const { authenticate, authorize } = require('../middleware/auth');
+const { validatePagination } = require('../middleware/validate');
 
 // ==================== SUPPLIERS ====================
 
 // Get all suppliers
-router.get('/', async (req, res) => {
+router.get('/', authenticate, async (req, res, next) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const skip = (page - 1) * limit;
+    const search = req.query.search || '';
+    const sortBy = req.query.sortBy || 'name';
+    const sortOrder = req.query.sortOrder || 'asc';
     const { category, active } = req.query;
+
     const where = {};
     if (category) where.category = category;
     if (active !== undefined) where.isActive = active === 'true';
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { contactName: { contains: search, mode: 'insensitive' } },
+        { category: { contains: search, mode: 'insensitive' } }
+      ];
+    }
 
-    const suppliers = await req.prisma.supplier.findMany({
-      where,
-      include: {
-        purchaseOrders: {
-          orderBy: { orderDate: 'desc' },
-          take: 5
-        }
-      },
-      orderBy: { name: 'asc' }
-    });
-    res.json(suppliers);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    const [suppliers, total] = await Promise.all([
+      req.prisma.supplier.findMany({
+        where,
+        include: {
+          purchaseOrders: {
+            orderBy: { orderDate: 'desc' },
+            take: 5
+          }
+        },
+        orderBy: { [sortBy]: sortOrder },
+        skip,
+        take: limit
+      }),
+      req.prisma.supplier.count({ where })
+    ]);
+
+    res.json({ data: suppliers, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  } catch (error) { next(error); }
 });
 
 // Get supplier by ID
@@ -49,7 +69,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // Create supplier
-router.post('/', async (req, res) => {
+router.post('/', authenticate, async (req, res) => {
   try {
     const { name, contactName, email, phone, address, category, notes } = req.body;
 
@@ -71,7 +91,7 @@ router.post('/', async (req, res) => {
 });
 
 // Update supplier
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticate, async (req, res) => {
   try {
     const { name, contactName, email, phone, address, category, notes, isActive } = req.body;
 
@@ -95,7 +115,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // Delete supplier
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticate, async (req, res) => {
   try {
     await req.prisma.supplier.delete({ where: { id: req.params.id } });
     res.json({ message: 'Supplier deleted' });
@@ -309,6 +329,44 @@ router.get('/purchase-orders/options/statuses', async (req, res) => {
     { value: 'RECEIVED', label: 'Received' },
     { value: 'CANCELLED', label: 'Cancelled' }
   ]);
+});
+
+// Bulk delete suppliers
+router.post('/bulk-delete', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.supplier.deleteMany({ where: { id: { in: ids } } });
+    res.json({ message: `${ids.length} suppliers deleted` });
+  } catch (error) { next(error); }
+});
+
+// Bulk update suppliers
+router.put('/bulk-update', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids, data } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.supplier.updateMany({ where: { id: { in: ids } }, data });
+    res.json({ message: `${ids.length} suppliers updated` });
+  } catch (error) { next(error); }
+});
+
+// Export suppliers for PDF
+router.get('/export/pdf', authenticate, async (req, res, next) => {
+  try {
+    const suppliers = await req.prisma.supplier.findMany({
+      orderBy: { name: 'asc' }
+    });
+    const exportData = suppliers.map(s => ({
+      name: s.name,
+      contactName: s.contactName || '',
+      email: s.email || '',
+      phone: s.phone || '',
+      category: s.category || '',
+      isActive: s.isActive ? 'Active' : 'Inactive'
+    }));
+    res.json({ title: 'Suppliers Report', columns: ['Name', 'Contact', 'Email', 'Phone', 'Category', 'Status'], rows: exportData });
+  } catch (error) { next(error); }
 });
 
 module.exports = router;

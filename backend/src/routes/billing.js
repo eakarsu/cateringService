@@ -1,31 +1,50 @@
 const express = require('express');
 const router = express.Router();
+const { authenticate, authorize } = require('../middleware/auth');
+const { validatePagination } = require('../middleware/validate');
 
 // ==================== INVOICES ====================
 
 // Get all invoices
-router.get('/invoices', async (req, res) => {
+router.get('/invoices', authenticate, async (req, res, next) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const skip = (page - 1) * limit;
+    const search = req.query.search || '';
+    const sortBy = req.query.sortBy || 'createdAt';
+    const sortOrder = req.query.sortOrder || 'desc';
     const { status, type, eventId } = req.query;
+
     const where = {};
     if (status) where.status = status;
     if (type) where.type = type;
     if (eventId) where.eventId = eventId;
+    if (search) {
+      where.OR = [
+        { invoiceNumber: { contains: search, mode: 'insensitive' } },
+        { event: { name: { contains: search, mode: 'insensitive' } } }
+      ];
+    }
 
-    const invoices = await req.prisma.invoice.findMany({
-      where,
-      include: {
-        event: { include: { client: { select: { name: true, email: true } }, venue: true } },
-        createdBy: { select: { name: true } },
-        lineItems: true,
-        payments: true
-      },
-      orderBy: { createdAt: 'desc' }
-    });
-    res.json(invoices);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    const [invoices, total] = await Promise.all([
+      req.prisma.invoice.findMany({
+        where,
+        include: {
+          event: { include: { client: { select: { name: true, email: true } }, venue: true } },
+          createdBy: { select: { name: true } },
+          lineItems: true,
+          payments: true
+        },
+        orderBy: { [sortBy]: sortOrder },
+        skip,
+        take: limit
+      }),
+      req.prisma.invoice.count({ where })
+    ]);
+
+    res.json({ data: invoices, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  } catch (error) { next(error); }
 });
 
 // Get invoice by ID
@@ -50,7 +69,7 @@ router.get('/invoices/:id', async (req, res) => {
 });
 
 // Create invoice
-router.post('/invoices', async (req, res) => {
+router.post('/invoices', authenticate, async (req, res) => {
   try {
     const {
       eventId, createdById, type, subtotal, taxRate, gratuity, dueDate, notes, lineItems
@@ -95,7 +114,7 @@ router.post('/invoices', async (req, res) => {
 });
 
 // Update invoice
-router.put('/invoices/:id', async (req, res) => {
+router.put('/invoices/:id', authenticate, async (req, res) => {
   try {
     const { status, subtotal, taxRate, gratuity, dueDate, notes } = req.body;
 
@@ -132,7 +151,7 @@ router.put('/invoices/:id', async (req, res) => {
 });
 
 // Delete invoice
-router.delete('/invoices/:id', async (req, res) => {
+router.delete('/invoices/:id', authenticate, async (req, res) => {
   try {
     await req.prisma.invoice.delete({ where: { id: req.params.id } });
     res.json({ message: 'Invoice deleted' });
@@ -323,6 +342,49 @@ router.get('/options/payment-methods', async (req, res) => {
     { value: 'ZELLE', label: 'Zelle' },
     { value: 'OTHER', label: 'Other' }
   ]);
+});
+
+// Bulk delete invoices
+router.post('/invoices/bulk-delete', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.invoice.deleteMany({ where: { id: { in: ids } } });
+    res.json({ message: `${ids.length} invoices deleted` });
+  } catch (error) { next(error); }
+});
+
+// Bulk update invoices
+router.put('/invoices/bulk-update', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids, data } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.invoice.updateMany({ where: { id: { in: ids } }, data });
+    res.json({ message: `${ids.length} invoices updated` });
+  } catch (error) { next(error); }
+});
+
+// Export invoices for PDF
+router.get('/invoices/export/pdf', authenticate, async (req, res, next) => {
+  try {
+    const invoices = await req.prisma.invoice.findMany({
+      include: {
+        event: { include: { client: { select: { name: true } } } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    const exportData = invoices.map(inv => ({
+      invoiceNumber: inv.invoiceNumber,
+      event: inv.event?.name || '',
+      client: inv.event?.client?.name || '',
+      type: inv.type,
+      subtotal: inv.subtotal,
+      total: inv.total,
+      status: inv.status,
+      dueDate: inv.dueDate
+    }));
+    res.json({ title: 'Invoices Report', columns: ['Invoice #', 'Event', 'Client', 'Type', 'Subtotal', 'Total', 'Status', 'Due Date'], rows: exportData });
+  } catch (error) { next(error); }
 });
 
 module.exports = router;

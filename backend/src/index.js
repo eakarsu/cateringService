@@ -1,14 +1,24 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const { PrismaClient } = require('@prisma/client');
+const errorHandler = require('./middleware/errorHandler');
+const { generalLimiter, authLimiter } = require('./middleware/rateLimiter');
 
 const prisma = new PrismaClient();
 const app = express();
 
-// Middleware
+// Security middleware
+app.use(helmet());
 app.use(cors());
 app.use(express.json());
+
+// Rate limiting
+app.use('/api/', generalLimiter);
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/reset-password', authLimiter);
 
 // Make prisma available to routes
 app.use((req, res, next) => {
@@ -62,6 +72,9 @@ app.use('/uploads', require('express').static(path.join(__dirname, '../uploads')
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// Global error handler (must be last)
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 3001;
 

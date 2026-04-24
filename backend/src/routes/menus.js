@@ -1,27 +1,46 @@
 const express = require('express');
 const router = express.Router();
+const { authenticate, authorize } = require('../middleware/auth');
+const { validatePagination } = require('../middleware/validate');
 
 // ==================== MENU PACKAGES ====================
 
 // Get all packages
-router.get('/packages', async (req, res) => {
+router.get('/packages', authenticate, async (req, res, next) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const skip = (page - 1) * limit;
+    const search = req.query.search || '';
+    const sortBy = req.query.sortBy || 'name';
+    const sortOrder = req.query.sortOrder || 'asc';
     const { category, isActive } = req.query;
+
     const where = {};
     if (category) where.category = category;
     if (isActive !== undefined) where.isActive = isActive === 'true';
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } }
+      ];
+    }
 
-    const packages = await req.prisma.menuPackage.findMany({
-      where,
-      include: {
-        items: { include: { menuItem: true } }
-      },
-      orderBy: { name: 'asc' }
-    });
-    res.json(packages);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    const [packages, total] = await Promise.all([
+      req.prisma.menuPackage.findMany({
+        where,
+        include: {
+          items: { include: { menuItem: true } }
+        },
+        orderBy: { [sortBy]: sortOrder },
+        skip,
+        take: limit
+      }),
+      req.prisma.menuPackage.count({ where })
+    ]);
+
+    res.json({ data: packages, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  } catch (error) { next(error); }
 });
 
 // Get package by ID
@@ -43,7 +62,7 @@ router.get('/packages/:id', async (req, res) => {
 });
 
 // Create package
-router.post('/packages', async (req, res) => {
+router.post('/packages', authenticate, async (req, res) => {
   try {
     const { name, description, pricePerPerson, minGuests, maxGuests, category, items } = req.body;
 
@@ -72,7 +91,7 @@ router.post('/packages', async (req, res) => {
 });
 
 // Update package
-router.put('/packages/:id', async (req, res) => {
+router.put('/packages/:id', authenticate, async (req, res) => {
   try {
     const { name, description, pricePerPerson, minGuests, maxGuests, category, isActive } = req.body;
 
@@ -96,7 +115,7 @@ router.put('/packages/:id', async (req, res) => {
 });
 
 // Delete package
-router.delete('/packages/:id', async (req, res) => {
+router.delete('/packages/:id', authenticate, async (req, res) => {
   try {
     await req.prisma.menuPackage.delete({ where: { id: req.params.id } });
     res.json({ message: 'Package deleted successfully' });
@@ -137,9 +156,16 @@ router.delete('/packages/:id/items/:itemId', async (req, res) => {
 // ==================== MENU ITEMS ====================
 
 // Get all menu items
-router.get('/items', async (req, res) => {
+router.get('/items', authenticate, async (req, res, next) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const skip = (page - 1) * limit;
+    const search = req.query.search || '';
+    const sortBy = req.query.sortBy || 'name';
+    const sortOrder = req.query.sortOrder || 'asc';
     const { category, isActive, dietary } = req.query;
+
     const where = {};
     if (category) where.category = category;
     if (isActive !== undefined) where.isActive = isActive === 'true';
@@ -150,15 +176,25 @@ router.get('/items', async (req, res) => {
       if (dietary === 'dairy-free') where.isDairyFree = true;
       if (dietary === 'nut-free') where.isNutFree = true;
     }
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } }
+      ];
+    }
 
-    const items = await req.prisma.menuItem.findMany({
-      where,
-      orderBy: [{ category: 'asc' }, { name: 'asc' }]
-    });
-    res.json(items);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    const [items, total] = await Promise.all([
+      req.prisma.menuItem.findMany({
+        where,
+        orderBy: { [sortBy]: sortOrder },
+        skip,
+        take: limit
+      }),
+      req.prisma.menuItem.count({ where })
+    ]);
+
+    res.json({ data: items, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  } catch (error) { next(error); }
 });
 
 // Get menu item by ID
@@ -178,7 +214,7 @@ router.get('/items/:id', async (req, res) => {
 });
 
 // Create menu item
-router.post('/items', async (req, res) => {
+router.post('/items', authenticate, async (req, res) => {
   try {
     const {
       name, description, price, category,
@@ -206,7 +242,7 @@ router.post('/items', async (req, res) => {
 });
 
 // Update menu item
-router.put('/items/:id', async (req, res) => {
+router.put('/items/:id', authenticate, async (req, res) => {
   try {
     const {
       name, description, price, category, isActive,
@@ -236,7 +272,7 @@ router.put('/items/:id', async (req, res) => {
 });
 
 // Delete menu item
-router.delete('/items/:id', async (req, res) => {
+router.delete('/items/:id', authenticate, async (req, res) => {
   try {
     await req.prisma.menuItem.delete({ where: { id: req.params.id } });
     res.json({ message: 'Menu item deleted successfully' });
@@ -271,6 +307,65 @@ router.get('/options/package-categories', async (req, res) => {
     { value: 'DINNER', label: 'Dinner' },
     { value: 'DESSERT', label: 'Dessert' }
   ]);
+});
+
+// Bulk delete packages
+router.post('/packages/bulk-delete', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.menuPackage.deleteMany({ where: { id: { in: ids } } });
+    res.json({ message: `${ids.length} packages deleted` });
+  } catch (error) { next(error); }
+});
+
+// Bulk update packages
+router.put('/packages/bulk-update', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids, data } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.menuPackage.updateMany({ where: { id: { in: ids } }, data });
+    res.json({ message: `${ids.length} packages updated` });
+  } catch (error) { next(error); }
+});
+
+// Bulk delete menu items
+router.post('/items/bulk-delete', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.menuItem.deleteMany({ where: { id: { in: ids } } });
+    res.json({ message: `${ids.length} menu items deleted` });
+  } catch (error) { next(error); }
+});
+
+// Bulk update menu items
+router.put('/items/bulk-update', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids, data } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.menuItem.updateMany({ where: { id: { in: ids } }, data });
+    res.json({ message: `${ids.length} menu items updated` });
+  } catch (error) { next(error); }
+});
+
+// Export menu items for PDF
+router.get('/items/export/pdf', authenticate, async (req, res, next) => {
+  try {
+    const items = await req.prisma.menuItem.findMany({
+      orderBy: [{ category: 'asc' }, { name: 'asc' }]
+    });
+    const exportData = items.map(i => ({
+      name: i.name,
+      category: i.category,
+      price: i.price,
+      description: i.description || '',
+      vegetarian: i.isVegetarian ? 'Yes' : 'No',
+      vegan: i.isVegan ? 'Yes' : 'No',
+      glutenFree: i.isGlutenFree ? 'Yes' : 'No'
+    }));
+    res.json({ title: 'Menu Items Report', columns: ['Name', 'Category', 'Price', 'Description', 'Vegetarian', 'Vegan', 'Gluten Free'], rows: exportData });
+  } catch (error) { next(error); }
 });
 
 module.exports = router;

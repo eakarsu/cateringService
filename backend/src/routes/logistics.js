@@ -1,29 +1,48 @@
 const express = require('express');
 const router = express.Router();
+const { authenticate, authorize } = require('../middleware/auth');
+const { validatePagination } = require('../middleware/validate');
 
 // ==================== VEHICLES ====================
 
 // Get all vehicles
-router.get('/vehicles', async (req, res) => {
+router.get('/vehicles', authenticate, async (req, res, next) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const skip = (page - 1) * limit;
+    const search = req.query.search || '';
+    const sortBy = req.query.sortBy || 'name';
+    const sortOrder = req.query.sortOrder || 'asc';
     const { available } = req.query;
+
     const where = {};
     if (available !== undefined) where.isAvailable = available === 'true';
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { licensePlate: { contains: search, mode: 'insensitive' } }
+      ];
+    }
 
-    const vehicles = await req.prisma.vehicle.findMany({
-      where,
-      include: {
-        deliveries: {
-          where: { status: { notIn: ['RETURNED'] } },
-          include: { event: { select: { name: true, date: true } } }
-        }
-      },
-      orderBy: { name: 'asc' }
-    });
-    res.json(vehicles);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    const [vehicles, total] = await Promise.all([
+      req.prisma.vehicle.findMany({
+        where,
+        include: {
+          deliveries: {
+            where: { status: { notIn: ['RETURNED'] } },
+            include: { event: { select: { name: true, date: true } } }
+          }
+        },
+        orderBy: { [sortBy]: sortOrder },
+        skip,
+        take: limit
+      }),
+      req.prisma.vehicle.count({ where })
+    ]);
+
+    res.json({ data: vehicles, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  } catch (error) { next(error); }
 });
 
 // Get vehicle by ID
@@ -48,7 +67,7 @@ router.get('/vehicles/:id', async (req, res) => {
 });
 
 // Create vehicle
-router.post('/vehicles', async (req, res) => {
+router.post('/vehicles', authenticate, async (req, res) => {
   try {
     const { name, type, licensePlate, capacity, notes } = req.body;
 
@@ -62,7 +81,7 @@ router.post('/vehicles', async (req, res) => {
 });
 
 // Update vehicle
-router.put('/vehicles/:id', async (req, res) => {
+router.put('/vehicles/:id', authenticate, async (req, res) => {
   try {
     const { name, type, licensePlate, capacity, isAvailable, notes } = req.body;
 
@@ -77,7 +96,7 @@ router.put('/vehicles/:id', async (req, res) => {
 });
 
 // Delete vehicle
-router.delete('/vehicles/:id', async (req, res) => {
+router.delete('/vehicles/:id', authenticate, async (req, res) => {
   try {
     await req.prisma.vehicle.delete({ where: { id: req.params.id } });
     res.json({ message: 'Vehicle deleted' });
@@ -89,9 +108,16 @@ router.delete('/vehicles/:id', async (req, res) => {
 // ==================== DELIVERIES ====================
 
 // Get all deliveries
-router.get('/deliveries', async (req, res) => {
+router.get('/deliveries', authenticate, async (req, res, next) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const skip = (page - 1) * limit;
+    const search = req.query.search || '';
+    const sortBy = req.query.sortBy || 'scheduledTime';
+    const sortOrder = req.query.sortOrder || 'asc';
     const { status, date, vehicleId, eventId } = req.query;
+
     const where = {};
     if (status) where.status = status;
     if (vehicleId) where.vehicleId = vehicleId;
@@ -103,19 +129,29 @@ router.get('/deliveries', async (req, res) => {
       endOfDay.setHours(23, 59, 59, 999);
       where.scheduledTime = { gte: startOfDay, lte: endOfDay };
     }
+    if (search) {
+      where.OR = [
+        { driverName: { contains: search, mode: 'insensitive' } },
+        { event: { name: { contains: search, mode: 'insensitive' } } }
+      ];
+    }
 
-    const deliveries = await req.prisma.delivery.findMany({
-      where,
-      include: {
-        event: { include: { venue: true, client: { select: { name: true } } } },
-        vehicle: true
-      },
-      orderBy: { scheduledTime: 'asc' }
-    });
-    res.json(deliveries);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    const [deliveries, total] = await Promise.all([
+      req.prisma.delivery.findMany({
+        where,
+        include: {
+          event: { include: { venue: true, client: { select: { name: true } } } },
+          vehicle: true
+        },
+        orderBy: { [sortBy]: sortOrder },
+        skip,
+        take: limit
+      }),
+      req.prisma.delivery.count({ where })
+    ]);
+
+    res.json({ data: deliveries, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  } catch (error) { next(error); }
 });
 
 // Get delivery by ID
@@ -138,7 +174,7 @@ router.get('/deliveries/:id', async (req, res) => {
 });
 
 // Create delivery
-router.post('/deliveries', async (req, res) => {
+router.post('/deliveries', authenticate, async (req, res) => {
   try {
     const { eventId, vehicleId, scheduledTime, driverName, routeNotes, setupCrew } = req.body;
 
@@ -160,7 +196,7 @@ router.post('/deliveries', async (req, res) => {
 });
 
 // Update delivery
-router.put('/deliveries/:id', async (req, res) => {
+router.put('/deliveries/:id', authenticate, async (req, res) => {
   try {
     const {
       vehicleId, scheduledTime, actualDeparture, actualArrival,
@@ -211,7 +247,7 @@ router.post('/deliveries/:id/status', async (req, res) => {
 });
 
 // Delete delivery
-router.delete('/deliveries/:id', async (req, res) => {
+router.delete('/deliveries/:id', authenticate, async (req, res) => {
   try {
     await req.prisma.delivery.delete({ where: { id: req.params.id } });
     res.json({ message: 'Delivery deleted' });
@@ -407,6 +443,84 @@ router.get('/options/equipment-categories', async (req, res) => {
     { value: 'BEVERAGE', label: 'Beverage Equipment' },
     { value: 'OTHER', label: 'Other' }
   ]);
+});
+
+// Bulk delete vehicles
+router.post('/vehicles/bulk-delete', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.vehicle.deleteMany({ where: { id: { in: ids } } });
+    res.json({ message: `${ids.length} vehicles deleted` });
+  } catch (error) { next(error); }
+});
+
+// Bulk update vehicles
+router.put('/vehicles/bulk-update', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids, data } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.vehicle.updateMany({ where: { id: { in: ids } }, data });
+    res.json({ message: `${ids.length} vehicles updated` });
+  } catch (error) { next(error); }
+});
+
+// Bulk delete deliveries
+router.post('/deliveries/bulk-delete', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.delivery.deleteMany({ where: { id: { in: ids } } });
+    res.json({ message: `${ids.length} deliveries deleted` });
+  } catch (error) { next(error); }
+});
+
+// Bulk update deliveries
+router.put('/deliveries/bulk-update', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids, data } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.delivery.updateMany({ where: { id: { in: ids } }, data });
+    res.json({ message: `${ids.length} deliveries updated` });
+  } catch (error) { next(error); }
+});
+
+// Export vehicles for PDF
+router.get('/vehicles/export/pdf', authenticate, async (req, res, next) => {
+  try {
+    const vehicles = await req.prisma.vehicle.findMany({
+      orderBy: { name: 'asc' }
+    });
+    const exportData = vehicles.map(v => ({
+      name: v.name,
+      type: v.type,
+      licensePlate: v.licensePlate || '',
+      capacity: v.capacity || '',
+      isAvailable: v.isAvailable ? 'Available' : 'Unavailable'
+    }));
+    res.json({ title: 'Vehicles Report', columns: ['Name', 'Type', 'License Plate', 'Capacity', 'Status'], rows: exportData });
+  } catch (error) { next(error); }
+});
+
+// Export deliveries for PDF
+router.get('/deliveries/export/pdf', authenticate, async (req, res, next) => {
+  try {
+    const deliveries = await req.prisma.delivery.findMany({
+      include: {
+        event: { select: { name: true } },
+        vehicle: { select: { name: true } }
+      },
+      orderBy: { scheduledTime: 'desc' }
+    });
+    const exportData = deliveries.map(d => ({
+      event: d.event?.name || '',
+      vehicle: d.vehicle?.name || '',
+      driverName: d.driverName || '',
+      scheduledTime: d.scheduledTime,
+      status: d.status
+    }));
+    res.json({ title: 'Deliveries Report', columns: ['Event', 'Vehicle', 'Driver', 'Scheduled Time', 'Status'], rows: exportData });
+  } catch (error) { next(error); }
 });
 
 module.exports = router;

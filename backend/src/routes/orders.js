@@ -1,31 +1,50 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
+const { authenticate, authorize } = require('../middleware/auth');
+const { validatePagination } = require('../middleware/validate');
 
 // Get all orders
-router.get('/', async (req, res) => {
+router.get('/', authenticate, async (req, res, next) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const skip = (page - 1) * limit;
+    const search = req.query.search || '';
+    const sortBy = req.query.sortBy || 'createdAt';
+    const sortOrder = req.query.sortOrder || 'desc';
     const { status, eventId, clientId } = req.query;
+
     const where = {};
     if (status) where.status = status;
     if (eventId) where.eventId = eventId;
     if (clientId) where.clientId = clientId;
+    if (search) {
+      where.OR = [
+        { orderNumber: { contains: search, mode: 'insensitive' } },
+        { event: { name: { contains: search, mode: 'insensitive' } } }
+      ];
+    }
 
-    const orders = await req.prisma.order.findMany({
-      where,
-      include: {
-        event: { select: { name: true, date: true, venue: { select: { name: true } } } },
-        client: { select: { name: true, email: true } },
-        package: true,
-        items: { include: { menuItem: true } },
-        _count: { select: { prepLists: true, packLists: true } }
-      },
-      orderBy: { createdAt: 'desc' }
-    });
-    res.json(orders);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    const [orders, total] = await Promise.all([
+      req.prisma.order.findMany({
+        where,
+        include: {
+          event: { select: { name: true, date: true, venue: { select: { name: true } } } },
+          client: { select: { name: true, email: true } },
+          package: true,
+          items: { include: { menuItem: true } },
+          _count: { select: { prepLists: true, packLists: true } }
+        },
+        orderBy: { [sortBy]: sortOrder },
+        skip,
+        take: limit
+      }),
+      req.prisma.order.count({ where })
+    ]);
+
+    res.json({ data: orders, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  } catch (error) { next(error); }
 });
 
 // Get order by ID
@@ -52,7 +71,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // Create order
-router.post('/', async (req, res) => {
+router.post('/', authenticate, async (req, res) => {
   try {
     const { eventId, clientId, packageId, guestCount, specialRequests, items, totalAmount } = req.body;
 
@@ -91,7 +110,7 @@ router.post('/', async (req, res) => {
 });
 
 // Update order
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticate, async (req, res) => {
   try {
     const { status, guestCount, finalHeadcount, specialRequests, internalNotes, totalAmount } = req.body;
 
@@ -119,7 +138,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // Delete order
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticate, async (req, res) => {
   try {
     await req.prisma.order.delete({ where: { id: req.params.id } });
     res.json({ message: 'Order deleted successfully' });
@@ -192,6 +211,50 @@ router.get('/options/statuses', async (req, res) => {
     { value: 'COMPLETED', label: 'Completed' },
     { value: 'CANCELLED', label: 'Cancelled' }
   ]);
+});
+
+// Bulk delete orders
+router.post('/bulk-delete', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.order.deleteMany({ where: { id: { in: ids } } });
+    res.json({ message: `${ids.length} orders deleted` });
+  } catch (error) { next(error); }
+});
+
+// Bulk update orders
+router.put('/bulk-update', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids, data } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.order.updateMany({ where: { id: { in: ids } }, data });
+    res.json({ message: `${ids.length} orders updated` });
+  } catch (error) { next(error); }
+});
+
+// Export orders for PDF
+router.get('/export/pdf', authenticate, async (req, res, next) => {
+  try {
+    const orders = await req.prisma.order.findMany({
+      include: {
+        event: { select: { name: true } },
+        client: { select: { name: true } },
+        package: { select: { name: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    const exportData = orders.map(o => ({
+      orderNumber: o.orderNumber,
+      event: o.event?.name || '',
+      client: o.client?.name || '',
+      package: o.package?.name || '',
+      guestCount: o.guestCount,
+      totalAmount: o.totalAmount,
+      status: o.status
+    }));
+    res.json({ title: 'Orders Report', columns: ['Order #', 'Event', 'Client', 'Package', 'Guests', 'Total', 'Status'], rows: exportData });
+  } catch (error) { next(error); }
 });
 
 module.exports = router;

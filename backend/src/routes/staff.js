@@ -1,33 +1,52 @@
 const express = require('express');
 const router = express.Router();
+const { authenticate, authorize } = require('../middleware/auth');
+const { validatePagination } = require('../middleware/validate');
 
 // ==================== STAFF ====================
 
 // Get all staff
-router.get('/', async (req, res) => {
+router.get('/', authenticate, async (req, res, next) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const skip = (page - 1) * limit;
+    const search = req.query.search || '';
+    const sortBy = req.query.sortBy || 'createdAt';
+    const sortOrder = req.query.sortOrder || 'desc';
     const { position, isActive } = req.query;
+
     const where = {};
     if (position) where.position = position;
     if (isActive !== undefined) where.isActive = isActive === 'true';
+    if (search) {
+      where.OR = [
+        { user: { name: { contains: search, mode: 'insensitive' } } },
+        { position: { contains: search, mode: 'insensitive' } }
+      ];
+    }
 
-    const staff = await req.prisma.staff.findMany({
-      where,
-      include: {
-        user: { select: { name: true, email: true, phone: true } },
-        assignments: {
-          where: { event: { date: { gte: new Date() } } },
-          include: { event: { select: { name: true, date: true } } },
-          orderBy: { startTime: 'asc' },
-          take: 5
-        }
-      },
-      orderBy: { user: { name: 'asc' } }
-    });
-    res.json(staff);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    const [staff, total] = await Promise.all([
+      req.prisma.staff.findMany({
+        where,
+        include: {
+          user: { select: { name: true, email: true, phone: true } },
+          assignments: {
+            where: { event: { date: { gte: new Date() } } },
+            include: { event: { select: { name: true, date: true } } },
+            orderBy: { startTime: 'asc' },
+            take: 5
+          }
+        },
+        orderBy: sortBy === 'name' ? { user: { name: sortOrder } } : { [sortBy]: sortOrder },
+        skip,
+        take: limit
+      }),
+      req.prisma.staff.count({ where })
+    ]);
+
+    res.json({ data: staff, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  } catch (error) { next(error); }
 });
 
 // Get staff by ID
@@ -57,7 +76,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // Create staff profile (with optional new user creation)
-router.post('/', async (req, res) => {
+router.post('/', authenticate, async (req, res) => {
   try {
     const {
       userId, position, hourlyRate, skills, uniformSize,
@@ -105,7 +124,7 @@ router.post('/', async (req, res) => {
 });
 
 // Update staff
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticate, async (req, res) => {
   try {
     const {
       position, hourlyRate, skills, uniformSize,
@@ -134,7 +153,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // Delete staff
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticate, async (req, res) => {
   try {
     await req.prisma.staff.delete({ where: { id: req.params.id } });
     res.json({ message: 'Staff deleted' });
@@ -370,6 +389,45 @@ router.get('/options/uniform-sizes', async (req, res) => {
     { value: 'XXL', label: '2XL' },
     { value: 'XXXL', label: '3XL' }
   ]);
+});
+
+// Bulk delete staff
+router.post('/bulk-delete', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.staff.deleteMany({ where: { id: { in: ids } } });
+    res.json({ message: `${ids.length} staff deleted` });
+  } catch (error) { next(error); }
+});
+
+// Bulk update staff
+router.put('/bulk-update', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids, data } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.staff.updateMany({ where: { id: { in: ids } }, data });
+    res.json({ message: `${ids.length} staff updated` });
+  } catch (error) { next(error); }
+});
+
+// Export staff for PDF
+router.get('/export/pdf', authenticate, async (req, res, next) => {
+  try {
+    const staff = await req.prisma.staff.findMany({
+      include: { user: { select: { name: true, email: true, phone: true } } },
+      orderBy: { user: { name: 'asc' } }
+    });
+    const exportData = staff.map(s => ({
+      name: s.user?.name || '',
+      email: s.user?.email || '',
+      phone: s.user?.phone || '',
+      position: s.position,
+      hourlyRate: s.hourlyRate,
+      isActive: s.isActive ? 'Active' : 'Inactive'
+    }));
+    res.json({ title: 'Staff Report', columns: ['Name', 'Email', 'Phone', 'Position', 'Hourly Rate', 'Status'], rows: exportData });
+  } catch (error) { next(error); }
 });
 
 module.exports = router;

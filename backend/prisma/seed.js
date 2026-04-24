@@ -910,6 +910,59 @@ async function main() {
 
   console.log(`Created ${costEstimates.length} cost estimates`);
 
+  // ==================== INVENTORY LOGS (15+) ====================
+  const inventoryLogData = [];
+  for (let i = 0; i < ingredients.length && i < 20; i++) {
+    const ingredient = ingredients[i];
+    // Create 2-3 log entries per ingredient
+    inventoryLogData.push(
+      { ingredientId: ingredient.id, type: 'IN', quantity: 20 + i * 2, notes: 'Weekly delivery' },
+      { ingredientId: ingredient.id, type: 'OUT', quantity: 5 + (i % 5), notes: `Used for event prep` }
+    );
+    if (i % 3 === 0) {
+      inventoryLogData.push(
+        { ingredientId: ingredient.id, type: 'ADJUSTMENT', quantity: -(i % 3), notes: 'Inventory count adjustment' }
+      );
+    }
+  }
+  await prisma.inventoryLog.createMany({ data: inventoryLogData });
+  console.log(`Created ${inventoryLogData.length} inventory logs`);
+
+  // ==================== EQUIPMENT BOOKINGS (15+) ====================
+  const bookingData = [];
+  for (let i = 0; i < events.length && i < 15; i++) {
+    const event = events[i];
+    // Book 3-4 equipment items per event
+    for (let j = 0; j < 3 + (i % 2); j++) {
+      const equip = equipment[(i * 3 + j) % equipment.length];
+      bookingData.push({
+        equipmentId: equip.id,
+        eventId: event.id,
+        quantity: 1 + (j % 3),
+        pickedUp: i % 3 === 0,
+        returned: i % 5 === 0,
+        notes: j === 0 ? 'Priority booking' : null
+      });
+    }
+  }
+  await prisma.equipmentBooking.createMany({ data: bookingData });
+  console.log(`Created ${bookingData.length} equipment bookings`);
+
+  // ==================== ADDITIONAL PAYMENTS (to ensure 15+) ====================
+  const additionalPayments = [];
+  for (let i = 0; i < invoices.length; i++) {
+    if (i % 2 !== 0) { // Fill in the gaps from original payments
+      additionalPayments.push({
+        invoiceId: invoices[i].id,
+        amount: invoices[i].total * 0.3,
+        method: ['VENMO', 'ZELLE', 'CREDIT_CARD', 'BANK_TRANSFER'][i % 4],
+        reference: `PAY-ADD-${Date.now()}-${i}`
+      });
+    }
+  }
+  await prisma.payment.createMany({ data: additionalPayments });
+  console.log(`Created ${additionalPayments.length} additional payments (total: ${payments.length + additionalPayments.length})`);
+
   console.log('');
   console.log('============================================');
   console.log('Database seeding completed successfully!');

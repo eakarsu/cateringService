@@ -1,33 +1,51 @@
 const express = require('express');
 const router = express.Router();
+const { authenticate, authorize } = require('../middleware/auth');
+const { validatePagination } = require('../middleware/validate');
 
 // Get all events
-router.get('/', async (req, res) => {
+router.get('/', authenticate, async (req, res, next) => {
   try {
-    const { status, clientId, startDate, endDate } = req.query;
-    const where = {};
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const skip = (page - 1) * limit;
+    const search = req.query.search || '';
+    const sortBy = req.query.sortBy || 'date';
+    const sortOrder = req.query.sortOrder || 'desc';
+    const status = req.query.status;
 
+    const where = {};
     if (status) where.status = status;
-    if (clientId) where.clientId = clientId;
-    if (startDate || endDate) {
+    if (req.query.clientId) where.clientId = req.query.clientId;
+    if (req.query.startDate || req.query.endDate) {
       where.date = {};
-      if (startDate) where.date.gte = new Date(startDate);
-      if (endDate) where.date.lte = new Date(endDate);
+      if (req.query.startDate) where.date.gte = new Date(req.query.startDate);
+      if (req.query.endDate) where.date.lte = new Date(req.query.endDate);
+    }
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { client: { name: { contains: search, mode: 'insensitive' } } }
+      ];
     }
 
-    const events = await req.prisma.event.findMany({
-      where,
-      include: {
-        client: { select: { id: true, name: true, email: true } },
-        venue: true,
-        _count: { select: { orders: true, proposals: true } }
-      },
-      orderBy: { date: 'asc' }
-    });
-    res.json(events);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    const [events, total] = await Promise.all([
+      req.prisma.event.findMany({
+        where,
+        include: {
+          client: { select: { id: true, name: true, email: true } },
+          venue: true,
+          _count: { select: { orders: true, proposals: true } }
+        },
+        orderBy: { [sortBy]: sortOrder },
+        skip,
+        take: limit
+      }),
+      req.prisma.event.count({ where })
+    ]);
+
+    res.json({ data: events, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  } catch (error) { next(error); }
 });
 
 // Get event by ID
@@ -57,7 +75,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // Create event
-router.post('/', async (req, res) => {
+router.post('/', authenticate, async (req, res) => {
   try {
     const {
       name, eventType, date, startTime, endTime, guestCount,
@@ -90,7 +108,7 @@ router.post('/', async (req, res) => {
 });
 
 // Update event
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticate, async (req, res) => {
   try {
     const {
       name, eventType, date, startTime, endTime, guestCount, status,
@@ -124,7 +142,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // Delete event
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticate, async (req, res) => {
   try {
     await req.prisma.event.delete({ where: { id: req.params.id } });
     res.json({ message: 'Event deleted successfully' });
@@ -212,6 +230,46 @@ router.delete('/:id/timeline/:timelineId', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// Bulk delete events
+router.post('/bulk-delete', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.event.deleteMany({ where: { id: { in: ids } } });
+    res.json({ message: `${ids.length} events deleted` });
+  } catch (error) { next(error); }
+});
+
+// Bulk update events
+router.put('/bulk-update', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids, data } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.event.updateMany({ where: { id: { in: ids } }, data });
+    res.json({ message: `${ids.length} events updated` });
+  } catch (error) { next(error); }
+});
+
+// Export events for PDF
+router.get('/export/pdf', authenticate, async (req, res, next) => {
+  try {
+    const events = await req.prisma.event.findMany({
+      include: { client: { select: { name: true } }, venue: { select: { name: true } } },
+      orderBy: { date: 'desc' }
+    });
+    const exportData = events.map(e => ({
+      name: e.name,
+      type: e.eventType,
+      date: e.date,
+      guestCount: e.guestCount,
+      status: e.status,
+      client: e.client?.name || '',
+      venue: e.venue?.name || ''
+    }));
+    res.json({ title: 'Events Report', columns: ['Name', 'Type', 'Date', 'Guests', 'Status', 'Client', 'Venue'], rows: exportData });
+  } catch (error) { next(error); }
 });
 
 module.exports = router;

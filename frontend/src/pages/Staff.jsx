@@ -1,9 +1,19 @@
 import { useState, useEffect } from 'react';
 import api from '../utils/api';
+import { useToast } from '../context/ToastContext';
 import { format } from 'date-fns';
-import { Plus, Users, Clock, Calendar, Edit, Trash2, CheckCircle } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import Pagination from '../components/Pagination';
+import ConfirmDialog from '../components/ConfirmDialog';
+import { SkeletonGrid } from '../components/SkeletonLoader';
+import {
+  Plus, Users, Clock, Calendar, Edit, Trash2, CheckCircle,
+  Search, ArrowUpDown, Download, CheckSquare, Square, X
+} from 'lucide-react';
 
 export default function Staff() {
+  const toast = useToast();
   const [staff, setStaff] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [timeEntries, setTimeEntries] = useState([]);
@@ -18,18 +28,35 @@ export default function Staff() {
   const [editing, setEditing] = useState(null);
   const [formData, setFormData] = useState({});
   const [error, setError] = useState('');
+  const [validationErrors, setValidationErrors] = useState({});
   const [selectedStaff, setSelectedStaff] = useState(null);
   const [selectedAssignment, setSelectedAssignment] = useState(null);
   const [selectedTimeEntry, setSelectedTimeEntry] = useState(null);
 
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
+  const [pagination, setPagination] = useState({ total: 0, totalPages: 1 });
+
+  // Search & Sort
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sortBy, setSortBy] = useState('name');
+  const [sortOrder, setSortOrder] = useState('asc');
+
+  // Bulk selection
+  const [selectedIds, setSelectedIds] = useState([]);
+
+  // Confirm dialog
+  const [confirmDialog, setConfirmDialog] = useState({ isOpen: false });
+
   useEffect(() => {
     loadData();
-  }, []);
+  }, [page, limit, sortBy, sortOrder]);
 
   const loadData = async () => {
     try {
       const [staffRes, assignmentsRes, timeRes, eventsRes, usersRes, positionsRes, uniformSizesRes] = await Promise.all([
-        api.get('/staff'),
+        api.get('/staff', { params: { page, limit, sortBy, sortOrder, search: searchTerm || undefined } }),
         api.get('/staff/assignments/all'),
         api.get('/staff/time-entries/all'),
         api.get('/events'),
@@ -37,26 +64,66 @@ export default function Staff() {
         api.get('/staff/options/positions'),
         api.get('/staff/options/uniform-sizes')
       ]);
-      setStaff(staffRes.data);
-      setAssignments(assignmentsRes.data);
-      setTimeEntries(timeRes.data);
-      setEvents(eventsRes.data);
+      const staffData = staffRes.data.data || staffRes.data;
+      setStaff(Array.isArray(staffData) ? staffData : []);
+      if (staffRes.data.pagination) setPagination(staffRes.data.pagination);
+      else if (Array.isArray(staffRes.data)) setPagination({ total: staffRes.data.length, totalPages: 1 });
+
+      const assignData = assignmentsRes.data.data || assignmentsRes.data;
+      setAssignments(Array.isArray(assignData) ? assignData : []);
+      const timeData = timeRes.data.data || timeRes.data;
+      setTimeEntries(Array.isArray(timeData) ? timeData : []);
+      const evtData = eventsRes.data.data || eventsRes.data;
+      setEvents(Array.isArray(evtData) ? evtData : []);
+
       // Filter users who don't already have a staff profile
-      const staffUserIds = staffRes.data.map(s => s.userId);
+      const staffUserIds = (Array.isArray(staffData) ? staffData : []).map(s => s.userId);
       setUsers(usersRes.data.filter(u => u.role === 'STAFF' && !staffUserIds.includes(u.id)));
       setPositions(positionsRes.data);
       setUniformSizes(uniformSizesRes.data);
     } catch (error) {
       console.error('Failed to load data:', error);
+      toast?.error('Failed to load staff data');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSearch = (e) => {
+    e?.preventDefault?.();
+    setPage(1);
+    loadData();
+  };
+
+  const validateForm = () => {
+    const errs = {};
+    if (modalType === 'staff') {
+      if (!editing) {
+        if (!formData.createNew && !formData.userId) errs.userId = 'Please select a user or create a new one';
+        if (formData.createNew) {
+          if (!formData.newUserName?.trim()) errs.newUserName = 'Name is required';
+          if (!formData.newUserEmail?.trim()) errs.newUserEmail = 'Email is required';
+          else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.newUserEmail)) errs.newUserEmail = 'Invalid email format';
+        }
+      }
+      if (!formData.position) errs.position = 'Position is required';
+      if (!formData.hourlyRate || parseFloat(formData.hourlyRate) <= 0) errs.hourlyRate = 'Valid hourly rate is required';
+    } else {
+      if (!formData.staffId) errs.staffId = 'Staff member is required';
+      if (!formData.eventId) errs.eventId = 'Event is required';
+      if (!formData.startTime) errs.startTime = 'Start time is required';
+      if (!formData.endTime) errs.endTime = 'End time is required';
+      if (formData.startTime && formData.endTime && formData.startTime >= formData.endTime) errs.endTime = 'End time must be after start time';
+    }
+    setValidationErrors(errs);
+    return Object.keys(errs).length === 0;
   };
 
   const openModal = (type, item = null) => {
     setModalType(type);
     setEditing(item);
     setError('');
+    setValidationErrors({});
     if (type === 'staff') {
       setFormData(item ? {
         position: item.position,
@@ -88,61 +155,163 @@ export default function Staff() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    if (!validateForm()) return;
     try {
       if (modalType === 'staff') {
         if (editing) {
           await api.put(`/staff/${editing.id}`, formData);
+          toast?.success('Staff member updated successfully');
         } else {
           await api.post('/staff', formData);
+          toast?.success('Staff member created successfully');
         }
       } else {
         await api.post('/staff/assignments', formData);
+        toast?.success('Assignment created successfully');
       }
       setShowModal(false);
       setEditing(null);
       loadData();
     } catch (err) {
       console.error('Failed to save:', err);
-      setError(err.response?.data?.error || 'Failed to save. Please try again.');
+      const msg = err.response?.data?.error || 'Failed to save. Please try again.';
+      setError(msg);
+      toast?.error(msg);
     }
   };
 
   const confirmAssignment = async (id) => {
     try {
       await api.put(`/staff/assignments/${id}`, { confirmed: true });
+      toast?.success('Assignment confirmed');
       loadData();
     } catch (error) {
       console.error('Failed to confirm:', error);
+      toast?.error('Failed to confirm assignment');
     }
   };
 
   const approveTimeEntry = async (id) => {
     try {
       await api.post(`/staff/time-entries/${id}/approve`);
+      toast?.success('Time entry approved');
       loadData();
     } catch (error) {
       console.error('Failed to approve:', error);
+      toast?.error('Failed to approve time entry');
     }
   };
 
-  const handleDelete = async (type, id) => {
-    if (!confirm('Are you sure?')) return;
+  const handleDelete = (type, id) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: `Delete ${type === 'staff' ? 'Staff Member' : 'Assignment'}`,
+      message: `Are you sure you want to delete this ${type === 'staff' ? 'staff member' : 'assignment'}? This action cannot be undone.`,
+      confirmLabel: 'Delete',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          if (type === 'staff') await api.delete(`/staff/${id}`);
+          else await api.delete(`/staff/assignments/${id}`);
+          toast?.success(`${type === 'staff' ? 'Staff member' : 'Assignment'} deleted`);
+          loadData();
+        } catch (error) {
+          console.error('Failed to delete:', error);
+          toast?.error('Failed to delete');
+        }
+        setConfirmDialog({ isOpen: false });
+      },
+      onCancel: () => setConfirmDialog({ isOpen: false })
+    });
+  };
+
+  // Bulk operations
+  const toggleSelect = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  const toggleSelectAll = () => setSelectedIds(prev => prev.length === staff.length ? [] : staff.map(s => s.id));
+
+  const handleBulkDelete = () => {
+    if (!selectedIds.length) return;
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Selected Staff',
+      message: `Are you sure you want to delete ${selectedIds.length} staff members? This cannot be undone.`,
+      confirmLabel: 'Delete All',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await api.post('/staff/bulk-delete', { ids: selectedIds });
+          toast?.success(`${selectedIds.length} staff members deleted`);
+          setSelectedIds([]);
+          loadData();
+        } catch (error) {
+          console.error('Failed to bulk delete:', error);
+          toast?.error('Failed to delete selected staff');
+        }
+        setConfirmDialog({ isOpen: false });
+      },
+      onCancel: () => setConfirmDialog({ isOpen: false })
+    });
+  };
+
+  const handleBulkPositionUpdate = async (position) => {
+    if (!selectedIds.length || !position) return;
     try {
-      if (type === 'staff') await api.delete(`/staff/${id}`);
-      else await api.delete(`/staff/assignments/${id}`);
+      await api.put('/staff/bulk-update', { ids: selectedIds, data: { position } });
+      toast?.success(`${selectedIds.length} staff members updated to ${position}`);
+      setSelectedIds([]);
       loadData();
     } catch (error) {
-      console.error('Failed to delete:', error);
+      console.error('Failed to bulk update:', error);
+      toast?.error('Failed to update selected staff');
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-      </div>
-    );
-  }
+  // Sort
+  const handleSort = (field) => {
+    if (sortBy === field) setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+    else { setSortBy(field); setSortOrder('asc'); }
+  };
+
+  // PDF Export
+  const exportPDF = async () => {
+    try {
+      let exportData = staff;
+      try {
+        const res = await api.get('/staff/export/pdf');
+        if (res.data?.rows) {
+          exportData = res.data.rows;
+        }
+      } catch {
+        // fallback to current data
+      }
+      const doc = new jsPDF();
+      doc.setFontSize(18);
+      doc.text('Staff Report', 14, 22);
+      doc.setFontSize(10);
+      doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 30);
+      autoTable(doc, {
+        startY: 35,
+        head: [['Name', 'Email', 'Position', 'Rate', 'Skills', 'Active']],
+        body: (exportData || []).map(s => [
+          s.user?.name || s.name || '',
+          s.user?.email || s.email || '',
+          s.position || '',
+          `$${s.hourlyRate || 0}/hr`,
+          s.skills || '-',
+          s.isActive !== undefined ? (s.isActive ? 'Yes' : 'No') : 'Yes'
+        ]),
+        theme: 'striped',
+        headStyles: { fillColor: [79, 70, 229] }
+      });
+      doc.save('staff-report.pdf');
+      toast?.success('PDF exported successfully');
+    } catch (error) {
+      console.error('Failed to export PDF:', error);
+      toast?.error('Failed to export PDF');
+    }
+  };
+
+  if (loading) return <SkeletonGrid count={6} />;
 
   return (
     <div className="space-y-6">
@@ -151,26 +320,31 @@ export default function Staff() {
           <h1 className="text-2xl font-bold text-gray-900">Staff</h1>
           <p className="text-gray-500">Manage staff, assignments, and time tracking</p>
         </div>
-        <button
-          onClick={() => openModal(activeTab === 'assignments' ? 'assignment' : 'staff')}
-          className="btn btn-primary flex items-center gap-2"
-        >
-          <Plus size={20} />
-          Add {activeTab === 'assignments' ? 'Assignment' : 'Staff'}
-        </button>
+        <div className="flex gap-2">
+          <button onClick={exportPDF} className="btn btn-secondary flex items-center gap-2">
+            <Download size={18} /> PDF
+          </button>
+          <button
+            onClick={() => openModal(activeTab === 'assignments' ? 'assignment' : 'staff')}
+            className="btn btn-primary flex items-center gap-2"
+          >
+            <Plus size={20} />
+            Add {activeTab === 'assignments' ? 'Assignment' : 'Staff'}
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
       <div className="border-b border-gray-200">
         <nav className="flex gap-8">
           {[
-            { id: 'staff', label: 'Staff', count: staff.length },
+            { id: 'staff', label: 'Staff', count: pagination.total || staff.length },
             { id: 'assignments', label: 'Assignments', count: assignments.length },
             { id: 'time', label: 'Time Tracking', count: timeEntries.length }
           ].map(tab => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => { setActiveTab(tab.id); setSelectedIds([]); }}
               className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors
                 ${activeTab === tab.id
                   ? 'border-indigo-600 text-indigo-600'
@@ -183,45 +357,117 @@ export default function Staff() {
         </nav>
       </div>
 
+      {/* Search & Sort Bar */}
+      {activeTab === 'staff' && (
+        <div className="card">
+          <div className="flex flex-wrap gap-4">
+            <form onSubmit={handleSearch} className="flex-1 min-w-[200px]">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 z-10 pointer-events-none" size={20} />
+                <input
+                  type="text"
+                  placeholder="Search by name, position..."
+                  className="input"
+                  style={{ paddingLeft: '2.5rem' }}
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onBlur={handleSearch}
+                />
+              </div>
+            </form>
+            <button onClick={() => handleSort(sortBy === 'name' ? 'position' : 'name')} className="btn btn-secondary flex items-center gap-1">
+              <ArrowUpDown size={16} /> {sortBy} {sortOrder === 'asc' ? '↑' : '↓'}
+            </button>
+            <div onClick={toggleSelectAll} className="btn btn-secondary flex items-center gap-1 cursor-pointer">
+              {selectedIds.length === staff.length && staff.length > 0 ? <CheckSquare size={16} className="text-indigo-600" /> : <Square size={16} />}
+              Select All
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Actions */}
+      {selectedIds.length > 0 && activeTab === 'staff' && (
+        <div className="card bg-indigo-50 border-indigo-200 flex flex-wrap items-center gap-4">
+          <span className="text-sm font-medium text-indigo-700">{selectedIds.length} selected</span>
+          <button onClick={handleBulkDelete} className="btn btn-danger text-sm py-1">Delete Selected</button>
+          <select
+            className="select w-auto text-sm py-1"
+            defaultValue=""
+            onChange={(e) => { if (e.target.value) handleBulkPositionUpdate(e.target.value); e.target.value = ''; }}
+          >
+            <option value="">Change Position...</option>
+            {positions.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </select>
+          <button onClick={() => setSelectedIds([])} className="ml-auto text-gray-500 hover:text-gray-700"><X size={18} /></button>
+        </div>
+      )}
+
       {/* Staff List */}
       {activeTab === 'staff' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {staff.map((s) => (
-            <div key={s.id} className="card cursor-pointer hover:shadow-lg transition-shadow" onClick={() => setSelectedStaff(s)}>
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-medium">
-                    {s.user?.name?.charAt(0)}
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {staff.map((s) => (
+              <div
+                key={s.id}
+                className={`card cursor-pointer hover:shadow-lg transition-shadow ${selectedIds.includes(s.id) ? 'ring-2 ring-indigo-500' : ''}`}
+                onClick={() => setSelectedStaff(s)}
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div onClick={(e) => { e.stopPropagation(); toggleSelect(s.id); }} className="cursor-pointer">
+                      {selectedIds.includes(s.id) ? <CheckSquare className="text-indigo-600" size={18} /> : <Square className="text-gray-400" size={18} />}
+                    </div>
+                    <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-medium">
+                      {s.user?.name?.charAt(0)}
+                    </div>
+                    <div>
+                      <p className="font-medium text-gray-900">{s.user?.name}</p>
+                      <p className="text-sm text-gray-500">{s.position}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-medium text-gray-900">{s.user?.name}</p>
-                    <p className="text-sm text-gray-500">{s.position}</p>
+                  <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+                    <button onClick={() => openModal('staff', s)} className="p-1 text-gray-400 hover:text-indigo-600">
+                      <Edit size={18} />
+                    </button>
+                    <button onClick={() => handleDelete('staff', s.id)} className="p-1 text-gray-400 hover:text-red-600">
+                      <Trash2 size={18} />
+                    </button>
                   </div>
                 </div>
-                <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                  <button onClick={() => openModal('staff', s)} className="p-1 text-gray-400 hover:text-indigo-600">
-                    <Edit size={18} />
-                  </button>
-                  <button onClick={() => handleDelete('staff', s.id)} className="p-1 text-gray-400 hover:text-red-600">
-                    <Trash2 size={18} />
-                  </button>
+
+                <div className="space-y-2 text-sm text-gray-500">
+                  <p><span className="font-medium">Rate:</span> ${s.hourlyRate}/hr</p>
+                  {s.skills && <p><span className="font-medium">Skills:</span> {s.skills}</p>}
+                  {s.uniformSize && <p><span className="font-medium">Uniform:</span> {s.uniformSize}</p>}
+                </div>
+
+                <div className="mt-3 pt-3 border-t border-gray-100">
+                  <span className={`badge ${s.isActive ? 'badge-success' : 'badge-gray'}`}>
+                    {s.isActive ? 'Active' : 'Inactive'}
+                  </span>
                 </div>
               </div>
+            ))}
+          </div>
 
-              <div className="space-y-2 text-sm text-gray-500">
-                <p><span className="font-medium">Rate:</span> ${s.hourlyRate}/hr</p>
-                {s.skills && <p><span className="font-medium">Skills:</span> {s.skills}</p>}
-                {s.uniformSize && <p><span className="font-medium">Uniform:</span> {s.uniformSize}</p>}
-              </div>
-
-              <div className="mt-3 pt-3 border-t border-gray-100">
-                <span className={`badge ${s.isActive ? 'badge-success' : 'badge-gray'}`}>
-                  {s.isActive ? 'Active' : 'Inactive'}
-                </span>
-              </div>
+          {staff.length === 0 && (
+            <div className="text-center py-12">
+              <Users className="mx-auto h-12 w-12 text-gray-400" />
+              <h3 className="mt-2 text-sm font-medium text-gray-900">No staff found</h3>
+              <p className="mt-1 text-sm text-gray-500">Get started by adding a new staff member.</p>
             </div>
-          ))}
-        </div>
+          )}
+
+          <Pagination
+            page={page}
+            totalPages={pagination.totalPages}
+            total={pagination.total}
+            limit={limit}
+            onPageChange={setPage}
+            onLimitChange={(l) => { setLimit(l); setPage(1); }}
+          />
+        </>
       )}
 
       {/* Assignments */}
@@ -320,10 +566,10 @@ export default function Staff() {
         </div>
       )}
 
-      {/* Modal */}
+      {/* Create/Edit Modal */}
       {showModal && (
-        <div className="modal-overlay">
-          <div className="modal-content">
+        <div className="modal-overlay" onClick={() => { setShowModal(false); setEditing(null); }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="p-6 border-b border-gray-200">
               <h2 className="text-xl font-semibold text-gray-900">
                 {editing ? 'Edit' : 'Add'} {modalType === 'staff' ? 'Staff' : 'Assignment'}
@@ -341,7 +587,12 @@ export default function Staff() {
                     <div>
                       <label className="label">User</label>
                       {users.length > 0 ? (
-                        <select className="select" value={formData.userId} onChange={(e) => setFormData({...formData, userId: e.target.value, createNew: false})} required={!formData.createNew}>
+                        <select
+                          className={`select ${validationErrors.userId ? 'border-red-500' : ''}`}
+                          value={formData.userId}
+                          onChange={(e) => setFormData({...formData, userId: e.target.value, createNew: false})}
+                          required={!formData.createNew}
+                        >
                           <option value="">Select User</option>
                           {users.map(u => (
                             <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
@@ -350,6 +601,7 @@ export default function Staff() {
                       ) : (
                         <p className="text-sm text-amber-600 bg-amber-50 p-2 rounded">All staff users already have profiles. Create a new user below.</p>
                       )}
+                      {validationErrors.userId && <p className="text-xs text-red-500 mt-1">{validationErrors.userId}</p>}
                       <div className="mt-3 p-3 bg-gray-50 rounded-lg">
                         <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
                           <input type="checkbox" checked={formData.createNew || false} onChange={(e) => setFormData({...formData, createNew: e.target.checked, userId: ''})} />
@@ -357,8 +609,14 @@ export default function Staff() {
                         </label>
                         {formData.createNew && (
                           <div className="space-y-2">
-                            <input type="text" className="input" placeholder="Full Name" value={formData.newUserName || ''} onChange={(e) => setFormData({...formData, newUserName: e.target.value})} required />
-                            <input type="email" className="input" placeholder="Email" value={formData.newUserEmail || ''} onChange={(e) => setFormData({...formData, newUserEmail: e.target.value})} required />
+                            <div>
+                              <input type="text" className={`input ${validationErrors.newUserName ? 'border-red-500' : ''}`} placeholder="Full Name" value={formData.newUserName || ''} onChange={(e) => setFormData({...formData, newUserName: e.target.value})} />
+                              {validationErrors.newUserName && <p className="text-xs text-red-500 mt-1">{validationErrors.newUserName}</p>}
+                            </div>
+                            <div>
+                              <input type="email" className={`input ${validationErrors.newUserEmail ? 'border-red-500' : ''}`} placeholder="Email" value={formData.newUserEmail || ''} onChange={(e) => setFormData({...formData, newUserEmail: e.target.value})} />
+                              {validationErrors.newUserEmail && <p className="text-xs text-red-500 mt-1">{validationErrors.newUserEmail}</p>}
+                            </div>
                             <input type="text" className="input" placeholder="Phone (optional)" value={formData.newUserPhone || ''} onChange={(e) => setFormData({...formData, newUserPhone: e.target.value})} />
                           </div>
                         )}
@@ -368,20 +626,22 @@ export default function Staff() {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="label">Position</label>
-                      <select className="select" value={formData.position} onChange={(e) => setFormData({...formData, position: e.target.value})}>
+                      <select className={`select ${validationErrors.position ? 'border-red-500' : ''}`} value={formData.position} onChange={(e) => setFormData({...formData, position: e.target.value})}>
                         {positions.map(p => (
                           <option key={p.value} value={p.value}>{p.label}</option>
                         ))}
                       </select>
+                      {validationErrors.position && <p className="text-xs text-red-500 mt-1">{validationErrors.position}</p>}
                     </div>
                     <div>
                       <label className="label">Hourly Rate</label>
-                      <input type="number" className="input" step="0.01" value={formData.hourlyRate} onChange={(e) => setFormData({...formData, hourlyRate: e.target.value})} required />
+                      <input type="number" className={`input ${validationErrors.hourlyRate ? 'border-red-500' : ''}`} step="0.01" value={formData.hourlyRate} onChange={(e) => setFormData({...formData, hourlyRate: e.target.value})} />
+                      {validationErrors.hourlyRate && <p className="text-xs text-red-500 mt-1">{validationErrors.hourlyRate}</p>}
                     </div>
                   </div>
                   <div>
                     <label className="label">Skills</label>
-                    <input type="text" className="input" value={formData.skills} onChange={(e) => setFormData({...formData, skills: e.target.value})} />
+                    <input type="text" className="input" value={formData.skills} onChange={(e) => setFormData({...formData, skills: e.target.value})} placeholder="e.g., Bartending, Food Safety" />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -404,21 +664,23 @@ export default function Staff() {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="label">Staff</label>
-                      <select className="select" value={formData.staffId} onChange={(e) => setFormData({...formData, staffId: e.target.value})} required>
+                      <select className={`select ${validationErrors.staffId ? 'border-red-500' : ''}`} value={formData.staffId} onChange={(e) => setFormData({...formData, staffId: e.target.value})}>
                         <option value="">Select Staff</option>
                         {staff.map(s => (
                           <option key={s.id} value={s.id}>{s.user?.name}</option>
                         ))}
                       </select>
+                      {validationErrors.staffId && <p className="text-xs text-red-500 mt-1">{validationErrors.staffId}</p>}
                     </div>
                     <div>
                       <label className="label">Event</label>
-                      <select className="select" value={formData.eventId} onChange={(e) => setFormData({...formData, eventId: e.target.value})} required>
+                      <select className={`select ${validationErrors.eventId ? 'border-red-500' : ''}`} value={formData.eventId} onChange={(e) => setFormData({...formData, eventId: e.target.value})}>
                         <option value="">Select Event</option>
-                        {events.map(e => (
-                          <option key={e.id} value={e.id}>{e.name}</option>
+                        {events.map(ev => (
+                          <option key={ev.id} value={ev.id}>{ev.name}</option>
                         ))}
                       </select>
+                      {validationErrors.eventId && <p className="text-xs text-red-500 mt-1">{validationErrors.eventId}</p>}
                     </div>
                   </div>
                   <div>
@@ -432,11 +694,13 @@ export default function Staff() {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="label">Start Time</label>
-                      <input type="datetime-local" className="input" value={formData.startTime} onChange={(e) => setFormData({...formData, startTime: e.target.value})} required />
+                      <input type="datetime-local" className={`input ${validationErrors.startTime ? 'border-red-500' : ''}`} value={formData.startTime} onChange={(e) => setFormData({...formData, startTime: e.target.value})} />
+                      {validationErrors.startTime && <p className="text-xs text-red-500 mt-1">{validationErrors.startTime}</p>}
                     </div>
                     <div>
                       <label className="label">End Time</label>
-                      <input type="datetime-local" className="input" value={formData.endTime} onChange={(e) => setFormData({...formData, endTime: e.target.value})} required />
+                      <input type="datetime-local" className={`input ${validationErrors.endTime ? 'border-red-500' : ''}`} value={formData.endTime} onChange={(e) => setFormData({...formData, endTime: e.target.value})} />
+                      {validationErrors.endTime && <p className="text-xs text-red-500 mt-1">{validationErrors.endTime}</p>}
                     </div>
                   </div>
                   <div>
@@ -457,8 +721,8 @@ export default function Staff() {
 
       {/* Assignment Detail Modal */}
       {selectedAssignment && (
-        <div className="modal-overlay">
-          <div className="modal-content">
+        <div className="modal-overlay" onClick={() => setSelectedAssignment(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="p-6 border-b border-gray-200">
               <h2 className="text-xl font-semibold text-gray-900">Assignment Details</h2>
             </div>
@@ -501,6 +765,7 @@ export default function Staff() {
               )}
             </div>
             <div className="p-6 border-t border-gray-200 flex justify-end gap-3">
+              <button onClick={() => handleDelete('assignment', selectedAssignment.id)} className="btn btn-danger">Delete</button>
               <button onClick={() => setSelectedAssignment(null)} className="btn btn-secondary">Close</button>
               {!selectedAssignment.confirmed && (
                 <button onClick={() => { confirmAssignment(selectedAssignment.id); setSelectedAssignment(null); }} className="btn btn-primary">Confirm Assignment</button>
@@ -512,8 +777,8 @@ export default function Staff() {
 
       {/* Time Entry Detail Modal */}
       {selectedTimeEntry && (
-        <div className="modal-overlay">
-          <div className="modal-content">
+        <div className="modal-overlay" onClick={() => setSelectedTimeEntry(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="p-6 border-b border-gray-200">
               <h2 className="text-xl font-semibold text-gray-900">Time Entry Details</h2>
             </div>
@@ -568,9 +833,9 @@ export default function Staff() {
       )}
 
       {/* Staff Detail Modal */}
-      {selectedStaff && (
-        <div className="modal-overlay">
-          <div className="modal-content">
+      {selectedStaff && !showModal && (
+        <div className="modal-overlay" onClick={() => setSelectedStaff(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="p-6 border-b border-gray-200">
               <h2 className="text-xl font-semibold text-gray-900">Staff Details</h2>
             </div>
@@ -637,6 +902,46 @@ export default function Staff() {
                 </div>
               )}
 
+              {/* Assignments for this staff member */}
+              {(() => {
+                const staffAssignments = assignments.filter(a => a.staffId === selectedStaff.id);
+                if (staffAssignments.length === 0) return null;
+                return (
+                  <div className="pt-4 border-t border-gray-200">
+                    <p className="text-sm text-gray-500 mb-2">Assignments ({staffAssignments.length})</p>
+                    <div className="space-y-2 max-h-32 overflow-y-auto">
+                      {staffAssignments.map(a => (
+                        <div key={a.id} className="flex justify-between items-center p-2 bg-gray-50 rounded text-sm">
+                          <span>{a.event?.name} - {a.role}</span>
+                          <span className={`badge text-xs ${a.confirmed ? 'badge-success' : 'badge-warning'}`}>
+                            {a.confirmed ? 'Confirmed' : 'Pending'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Time entries for this staff member */}
+              {(() => {
+                const staffTime = timeEntries.filter(t => t.staffId === selectedStaff.id);
+                if (staffTime.length === 0) return null;
+                return (
+                  <div className="pt-4 border-t border-gray-200">
+                    <p className="text-sm text-gray-500 mb-2">Recent Time Entries ({staffTime.length})</p>
+                    <div className="space-y-2 max-h-32 overflow-y-auto">
+                      {staffTime.slice(0, 5).map(t => (
+                        <div key={t.id} className="flex justify-between items-center p-2 bg-gray-50 rounded text-sm">
+                          <span>{format(new Date(t.date), 'MMM d, yyyy')}</span>
+                          <span className="font-medium text-indigo-600">{t.totalHours?.toFixed(2) || '-'} hrs</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className="grid grid-cols-2 gap-4 pt-4 border-t border-gray-200">
                 <div>
                   <p className="text-sm text-gray-500">Hire Date</p>
@@ -649,12 +954,32 @@ export default function Staff() {
               </div>
             </div>
             <div className="p-6 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  handleDelete('staff', selectedStaff.id);
+                  setSelectedStaff(null);
+                }}
+                className="btn btn-danger"
+              >
+                Delete
+              </button>
               <button onClick={() => setSelectedStaff(null)} className="btn btn-secondary">Close</button>
-              <button onClick={() => { setSelectedStaff(null); openModal('staff', selectedStaff); }} className="btn btn-primary">Edit Staff</button>
+              <button onClick={() => { const s = selectedStaff; setSelectedStaff(null); openModal('staff', s); }} className="btn btn-primary">Edit Staff</button>
             </div>
           </div>
         </div>
       )}
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmLabel={confirmDialog.confirmLabel}
+        variant={confirmDialog.variant}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={confirmDialog.onCancel}
+      />
     </div>
   );
 }

@@ -1,28 +1,46 @@
 const express = require('express');
 const router = express.Router();
+const { authenticate, authorize } = require('../middleware/auth');
+const { validatePagination } = require('../middleware/validate');
 
 // Get all proposals
-router.get('/', async (req, res) => {
+router.get('/', authenticate, async (req, res, next) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const skip = (page - 1) * limit;
+    const search = req.query.search || '';
+    const sortBy = req.query.sortBy || 'createdAt';
+    const sortOrder = req.query.sortOrder || 'desc';
     const { status, eventId } = req.query;
+
     const where = {};
     if (status) where.status = status;
     if (eventId) where.eventId = eventId;
+    if (search) {
+      where.OR = [
+        { event: { name: { contains: search, mode: 'insensitive' } } }
+      ];
+    }
 
-    const proposals = await req.prisma.proposal.findMany({
-      where,
-      include: {
-        event: { include: { client: { select: { name: true, email: true } }, venue: true } },
-        createdBy: { select: { name: true } },
-        menus: { include: { package: true } },
-        lineItems: true
-      },
-      orderBy: { createdAt: 'desc' }
-    });
-    res.json(proposals);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    const [proposals, total] = await Promise.all([
+      req.prisma.proposal.findMany({
+        where,
+        include: {
+          event: { include: { client: { select: { name: true, email: true } }, venue: true } },
+          createdBy: { select: { name: true } },
+          menus: { include: { package: true } },
+          lineItems: true
+        },
+        orderBy: { [sortBy]: sortOrder },
+        skip,
+        take: limit
+      }),
+      req.prisma.proposal.count({ where })
+    ]);
+
+    res.json({ data: proposals, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  } catch (error) { next(error); }
 });
 
 // Get proposal by ID
@@ -47,7 +65,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // Create proposal
-router.post('/', async (req, res) => {
+router.post('/', authenticate, async (req, res) => {
   try {
     const { eventId, createdById, totalAmount, validUntil, notes, menus, lineItems } = req.body;
 
@@ -89,7 +107,7 @@ router.post('/', async (req, res) => {
 });
 
 // Update proposal
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticate, async (req, res) => {
   try {
     const { status, totalAmount, validUntil, notes, signatureUrl, signedAt, signedBy } = req.body;
 
@@ -117,7 +135,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // Delete proposal
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticate, async (req, res) => {
   try {
     await req.prisma.proposal.delete({ where: { id: req.params.id } });
     res.json({ message: 'Proposal deleted successfully' });
@@ -225,6 +243,49 @@ router.get('/options/statuses', async (req, res) => {
     { value: 'REJECTED', label: 'Rejected' },
     { value: 'EXPIRED', label: 'Expired' }
   ]);
+});
+
+// Bulk delete proposals
+router.post('/bulk-delete', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.proposal.deleteMany({ where: { id: { in: ids } } });
+    res.json({ message: `${ids.length} proposals deleted` });
+  } catch (error) { next(error); }
+});
+
+// Bulk update proposals
+router.put('/bulk-update', authenticate, authorize('ADMIN', 'MANAGER'), async (req, res, next) => {
+  try {
+    const { ids, data } = req.body;
+    if (!ids || !ids.length) return res.status(400).json({ error: 'No IDs provided' });
+    await req.prisma.proposal.updateMany({ where: { id: { in: ids } }, data });
+    res.json({ message: `${ids.length} proposals updated` });
+  } catch (error) { next(error); }
+});
+
+// Export proposals for PDF
+router.get('/export/pdf', authenticate, async (req, res, next) => {
+  try {
+    const proposals = await req.prisma.proposal.findMany({
+      include: {
+        event: { include: { client: { select: { name: true } } } },
+        createdBy: { select: { name: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    const exportData = proposals.map(p => ({
+      event: p.event?.name || '',
+      client: p.event?.client?.name || '',
+      totalAmount: p.totalAmount,
+      status: p.status,
+      createdBy: p.createdBy?.name || '',
+      validUntil: p.validUntil,
+      createdAt: p.createdAt
+    }));
+    res.json({ title: 'Proposals Report', columns: ['Event', 'Client', 'Total', 'Status', 'Created By', 'Valid Until', 'Created'], rows: exportData });
+  } catch (error) { next(error); }
 });
 
 module.exports = router;

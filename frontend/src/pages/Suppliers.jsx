@@ -1,9 +1,20 @@
 import { useState, useEffect } from 'react';
 import api from '../utils/api';
+import { useToast } from '../context/ToastContext';
 import { format } from 'date-fns';
-import { Plus, Building2, Search, Phone, Mail, MapPin, Edit, Trash2, FileText, AlertTriangle, X, Package } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import Pagination from '../components/Pagination';
+import ConfirmDialog from '../components/ConfirmDialog';
+import { SkeletonGrid } from '../components/SkeletonLoader';
+import {
+  Plus, Building2, Search, Phone, Mail, MapPin, Edit, Trash2,
+  FileText, AlertTriangle, X, Package, ArrowUpDown, Download,
+  CheckSquare, Square
+} from 'lucide-react';
 
 export default function Suppliers() {
+  const toast = useToast();
   const [suppliers, setSuppliers] = useState([]);
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [lowStockIngredients, setLowStockIngredients] = useState([]);
@@ -17,6 +28,15 @@ export default function Suppliers() {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [error, setError] = useState('');
   const [selectedPO, setSelectedPO] = useState(null);
+  const [selectedSupplier, setSelectedSupplier] = useState(null);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
+  const [pagination, setPagination] = useState({ total: 0, totalPages: 1 });
+  const [sortBy, setSortBy] = useState('name');
+  const [sortOrder, setSortOrder] = useState('asc');
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [confirmDialog, setConfirmDialog] = useState({ isOpen: false });
+  const [validationErrors, setValidationErrors] = useState({});
 
   const [supplierForm, setSupplierForm] = useState({
     name: '',
@@ -35,37 +55,55 @@ export default function Suppliers() {
     items: [{ description: '', quantity: '', unit: '', unitPrice: '' }]
   });
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  useEffect(() => { loadData(); }, [page, limit, sortBy, sortOrder, categoryFilter]);
 
   const loadData = async () => {
     try {
       const [suppliersRes, ordersRes, ingredientsRes, categoriesRes] = await Promise.all([
-        api.get('/suppliers'),
+        api.get('/suppliers', { params: { page, limit, sortBy, sortOrder, search: searchTerm || undefined, category: categoryFilter || undefined } }),
         api.get('/suppliers/purchase-orders/all'),
         api.get('/kitchen/ingredients', { params: { lowStock: 'true' } }),
         api.get('/suppliers/options/categories')
       ]);
-      setSuppliers(suppliersRes.data);
-      setPurchaseOrders(ordersRes.data);
-      setLowStockIngredients(ingredientsRes.data);
-      setCategories(categoriesRes.data);
-    } catch (error) {
-      console.error('Failed to load data:', error);
+      setSuppliers(suppliersRes.data.data || suppliersRes.data);
+      if (suppliersRes.data.pagination) setPagination(suppliersRes.data.pagination);
+      setPurchaseOrders(Array.isArray(ordersRes.data) ? ordersRes.data : ordersRes.data.data || []);
+      setLowStockIngredients(Array.isArray(ingredientsRes.data) ? ingredientsRes.data : ingredientsRes.data.data || []);
+      setCategories(categoriesRes.data || []);
+    } catch (err) {
+      console.error('Failed to load data:', err);
+      toast?.error('Failed to load suppliers');
     } finally {
       setLoading(false);
     }
   };
 
+  const handleSearch = (e) => {
+    e?.preventDefault?.();
+    setPage(1);
+    loadData();
+  };
+
+  const validateSupplierForm = () => {
+    const errs = {};
+    if (!supplierForm.name.trim()) errs.name = 'Company name is required';
+    if (!supplierForm.category) errs.category = 'Category is required';
+    if (supplierForm.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supplierForm.email)) errs.email = 'Invalid email format';
+    setValidationErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
+
   const handleSubmitSupplier = async (e) => {
     e.preventDefault();
     setError('');
+    if (!validateSupplierForm()) return;
     try {
       if (editingItem) {
         await api.put(`/suppliers/${editingItem.id}`, supplierForm);
+        toast?.success('Supplier updated successfully');
       } else {
         await api.post('/suppliers', supplierForm);
+        toast?.success('Supplier created successfully');
       }
       setShowModal(false);
       setEditingItem(null);
@@ -73,6 +111,7 @@ export default function Suppliers() {
       loadData();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save supplier');
+      toast?.error('Failed to save supplier');
     }
   };
 
@@ -81,11 +120,13 @@ export default function Suppliers() {
     setError('');
     try {
       await api.post('/suppliers/purchase-orders', poForm);
+      toast?.success('Purchase order created');
       setShowModal(false);
       resetPOForm();
       loadData();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create purchase order');
+      toast?.error('Failed to create purchase order');
     }
   };
 
@@ -100,45 +141,123 @@ export default function Suppliers() {
       category: supplier.category,
       notes: supplier.notes || ''
     });
+    setValidationErrors({});
     setModalType('supplier');
     setShowModal(true);
   };
 
-  const handleDeleteSupplier = async (id) => {
-    if (!confirm('Are you sure you want to delete this supplier?')) return;
+  const handleDeleteSupplier = (id) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Supplier',
+      message: 'Are you sure you want to delete this supplier? This action cannot be undone.',
+      confirmLabel: 'Delete',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await api.delete(`/suppliers/${id}`);
+          toast?.success('Supplier deleted');
+          loadData();
+        } catch {
+          toast?.error('Failed to delete supplier');
+        }
+        setConfirmDialog({ isOpen: false });
+      },
+      onCancel: () => setConfirmDialog({ isOpen: false })
+    });
+  };
+
+  const handleBulkDelete = () => {
+    if (!selectedIds.length) return;
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Selected Suppliers',
+      message: `Are you sure you want to delete ${selectedIds.length} suppliers? This cannot be undone.`,
+      confirmLabel: 'Delete All',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await api.post('/suppliers/bulk-delete', { ids: selectedIds });
+          toast?.success(`${selectedIds.length} suppliers deleted`);
+          setSelectedIds([]);
+          loadData();
+        } catch {
+          toast?.error('Failed to delete suppliers');
+        }
+        setConfirmDialog({ isOpen: false });
+      },
+      onCancel: () => setConfirmDialog({ isOpen: false })
+    });
+  };
+
+  const handleBulkUpdate = async (data) => {
+    if (!selectedIds.length) return;
     try {
-      await api.delete(`/suppliers/${id}`);
+      await api.put('/suppliers/bulk-update', { ids: selectedIds, data });
+      toast?.success(`${selectedIds.length} suppliers updated`);
+      setSelectedIds([]);
       loadData();
-    } catch (error) {
-      console.error('Failed to delete supplier:', error);
+    } catch {
+      toast?.error('Failed to update suppliers');
     }
   };
 
   const handleUpdatePOStatus = async (id, status) => {
     try {
       await api.put(`/suppliers/purchase-orders/${id}`, { status });
+      toast?.success('PO status updated');
       loadData();
-    } catch (error) {
-      console.error('Failed to update PO status:', error);
+    } catch (err) {
+      console.error('Failed to update PO status:', err);
+      toast?.error('Failed to update PO status');
     }
   };
 
   const handleGeneratePOFromLowStock = async () => {
     if (suppliers.length === 0) {
-      alert('Please add a supplier first');
+      toast?.warning('Please add a supplier first');
       return;
     }
-
-    const supplierId = suppliers[0].id; // Default to first supplier
+    const supplierId = suppliers[0].id;
     try {
       await api.post('/suppliers/purchase-orders/from-low-stock', {
         supplierId,
         ingredientIds: lowStockIngredients.map(i => i.id)
       });
+      toast?.success('Purchase order generated from low stock');
       loadData();
       setActiveTab('orders');
-    } catch (error) {
-      console.error('Failed to generate PO:', error);
+    } catch (err) {
+      console.error('Failed to generate PO:', err);
+      toast?.error('Failed to generate PO');
+    }
+  };
+
+  const exportPDF = () => {
+    try {
+      const doc = new jsPDF();
+      doc.setFontSize(18);
+      doc.text('Suppliers Report', 14, 22);
+      doc.setFontSize(10);
+      doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 30);
+      autoTable(doc, {
+        startY: 35,
+        head: [['Name', 'Contact', 'Email', 'Phone', 'Category', 'Active']],
+        body: suppliers.map(s => [
+          s.name,
+          s.contactName || '',
+          s.email || '',
+          s.phone || '',
+          s.category || '',
+          s.isActive !== false ? 'Yes' : 'No'
+        ]),
+        theme: 'striped',
+        headStyles: { fillColor: [79, 70, 229] }
+      });
+      doc.save('suppliers-report.pdf');
+      toast?.success('PDF exported');
+    } catch {
+      toast?.error('Failed to export PDF');
     }
   };
 
@@ -152,6 +271,7 @@ export default function Suppliers() {
       category: '',
       notes: ''
     });
+    setValidationErrors({});
   };
 
   const resetPOForm = () => {
@@ -163,12 +283,13 @@ export default function Suppliers() {
     });
   };
 
-  const filteredSuppliers = suppliers.filter(s => {
-    const matchesSearch = s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          s.contactName?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory = !categoryFilter || s.category === categoryFilter;
-    return matchesSearch && matchesCategory;
-  });
+  const toggleSelect = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  const toggleSelectAll = () => setSelectedIds(prev => prev.length === suppliers.length ? [] : suppliers.map(s => s.id));
+
+  const handleSort = (field) => {
+    if (sortBy === field) setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+    else { setSortBy(field); setSortOrder('asc'); }
+  };
 
   const getStatusBadge = (status) => {
     const badges = {
@@ -182,13 +303,7 @@ export default function Suppliers() {
     return badges[status] || 'badge-gray';
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-      </div>
-    );
-  }
+  if (loading) return <SkeletonGrid count={6} />;
 
   return (
     <div className="space-y-6">
@@ -197,22 +312,23 @@ export default function Suppliers() {
           <h1 className="text-2xl font-bold text-gray-900">Suppliers & Purchasing</h1>
           <p className="text-gray-500">Manage vendors and purchase orders</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-2">
+          <button onClick={exportPDF} className="btn btn-secondary flex items-center gap-2">
+            <Download size={18} /> PDF
+          </button>
           {activeTab === 'suppliers' ? (
             <button
               onClick={() => { resetSupplierForm(); setEditingItem(null); setModalType('supplier'); setError(''); setShowModal(true); }}
               className="btn btn-primary flex items-center gap-2"
             >
-              <Plus size={20} />
-              Add Supplier
+              <Plus size={20} /> Add Supplier
             </button>
           ) : (
             <button
               onClick={() => { resetPOForm(); setModalType('po'); setError(''); setShowModal(true); }}
               className="btn btn-primary flex items-center gap-2"
             >
-              <Plus size={20} />
-              New Purchase Order
+              <Plus size={20} /> New Purchase Order
             </button>
           )}
         </div>
@@ -250,12 +366,12 @@ export default function Suppliers() {
       <div className="border-b border-gray-200">
         <nav className="flex gap-8">
           {[
-            { id: 'suppliers', label: 'Suppliers', count: suppliers.length },
+            { id: 'suppliers', label: 'Suppliers', count: pagination.total || suppliers.length },
             { id: 'orders', label: 'Purchase Orders', count: purchaseOrders.length }
           ].map(tab => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => { setActiveTab(tab.id); setSelectedIds([]); }}
               className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors
                 ${activeTab === tab.id
                   ? 'border-indigo-600 text-indigo-600'
@@ -271,39 +387,75 @@ export default function Suppliers() {
       {/* Suppliers Tab */}
       {activeTab === 'suppliers' && (
         <>
+          {/* Filters & Search */}
           <div className="card">
             <div className="flex flex-wrap gap-4">
-              <div className="flex-1 min-w-[200px]">
+              <form onSubmit={handleSearch} className="flex-1 min-w-[200px]">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 z-10 pointer-events-none" size={20} />
                   <input
                     type="text"
-                    placeholder="Search suppliers..."
+                    placeholder="Search by name, contact, category..."
                     className="input"
                     style={{ paddingLeft: '2.5rem' }}
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
+                    onBlur={handleSearch}
                   />
                 </div>
-              </div>
+              </form>
               <select
                 className="select w-48"
                 value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value)}
+                onChange={(e) => { setCategoryFilter(e.target.value); setPage(1); }}
               >
                 <option value="">All Categories</option>
                 {categories.map(cat => (
                   <option key={cat.value} value={cat.value}>{cat.label}</option>
                 ))}
               </select>
+              <button onClick={() => handleSort(sortBy === 'name' ? 'category' : 'name')} className="btn btn-secondary flex items-center gap-1">
+                <ArrowUpDown size={16} /> {sortBy} {sortOrder === 'asc' ? '\u2191' : '\u2193'}
+              </button>
             </div>
           </div>
 
+          {/* Bulk Actions */}
+          {selectedIds.length > 0 && (
+            <div className="card bg-indigo-50 border-indigo-200 flex items-center gap-4">
+              <span className="text-sm font-medium text-indigo-700">{selectedIds.length} selected</span>
+              <button onClick={handleBulkDelete} className="btn btn-danger text-sm py-1">Delete Selected</button>
+              <select
+                className="select w-auto text-sm py-1"
+                defaultValue=""
+                onChange={(e) => {
+                  if (e.target.value === 'active') handleBulkUpdate({ isActive: true });
+                  else if (e.target.value === 'inactive') handleBulkUpdate({ isActive: false });
+                  e.target.value = '';
+                }}
+              >
+                <option value="">Update Status...</option>
+                <option value="active">Set Active</option>
+                <option value="inactive">Set Inactive</option>
+              </select>
+              <button onClick={() => setSelectedIds([])} className="ml-auto text-gray-500 hover:text-gray-700"><X size={18} /></button>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredSuppliers.map(supplier => (
-              <div key={supplier.id} className="card hover:shadow-md transition-shadow cursor-pointer" onClick={() => handleEditSupplier(supplier)}>
+            {suppliers.map(supplier => (
+              <div
+                key={supplier.id}
+                className={`card hover:shadow-md transition-shadow cursor-pointer ${selectedIds.includes(supplier.id) ? 'ring-2 ring-indigo-500' : ''}`}
+                onClick={() => setSelectedSupplier(supplier)}
+              >
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-3">
+                    <div onClick={(e) => { e.stopPropagation(); toggleSelect(supplier.id); }} className="cursor-pointer">
+                      {selectedIds.includes(supplier.id)
+                        ? <CheckSquare className="text-indigo-600" size={18} />
+                        : <Square className="text-gray-400" size={18} />}
+                    </div>
                     <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
                       <Building2 className="text-indigo-600" size={20} />
                     </div>
@@ -314,7 +466,7 @@ export default function Suppliers() {
                   </div>
                   <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
                     <button
-                      onClick={() => handleEditSupplier(supplier)}
+                      onClick={() => { handleEditSupplier(supplier); setSelectedSupplier(null); }}
                       className="p-1 text-gray-400 hover:text-indigo-600"
                     >
                       <Edit size={18} />
@@ -352,22 +504,32 @@ export default function Suppliers() {
                   )}
                 </div>
 
-                {supplier.purchaseOrders?.length > 0 && (
-                  <div className="mt-3 pt-3 border-t border-gray-100 text-sm text-gray-500">
-                    {supplier.purchaseOrders.length} purchase order(s)
-                  </div>
-                )}
+                <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between text-sm text-gray-500">
+                  <span>{supplier.purchaseOrders?.length || 0} purchase order(s)</span>
+                  <span className={`badge ${supplier.isActive !== false ? 'badge-success' : 'badge-gray'} text-xs`}>
+                    {supplier.isActive !== false ? 'Active' : 'Inactive'}
+                  </span>
+                </div>
               </div>
             ))}
           </div>
 
-          {filteredSuppliers.length === 0 && (
+          {suppliers.length === 0 && (
             <div className="text-center py-12">
               <Building2 className="mx-auto h-12 w-12 text-gray-400" />
               <h3 className="mt-2 text-sm font-medium text-gray-900">No suppliers found</h3>
               <p className="mt-1 text-sm text-gray-500">Add your first supplier to get started.</p>
             </div>
           )}
+
+          <Pagination
+            page={page}
+            totalPages={pagination.totalPages}
+            total={pagination.total}
+            limit={limit}
+            onPageChange={setPage}
+            onLimitChange={(l) => { setLimit(l); setPage(1); }}
+          />
         </>
       )}
 
@@ -399,7 +561,7 @@ export default function Suppliers() {
                   <td>{format(new Date(po.orderDate), 'MMM d, yyyy')}</td>
                   <td>{po.expectedDate ? format(new Date(po.expectedDate), 'MMM d, yyyy') : '-'}</td>
                   <td>{po.items?.length || 0}</td>
-                  <td>${po.totalAmount.toFixed(2)}</td>
+                  <td>${po.totalAmount?.toFixed(2)}</td>
                   <td onClick={(e) => e.stopPropagation()}>
                     <select
                       value={po.status}
@@ -436,6 +598,68 @@ export default function Suppliers() {
         </div>
       )}
 
+      {/* Supplier Detail Modal */}
+      {selectedSupplier && !showModal && (
+        <div className="modal-overlay" onClick={() => setSelectedSupplier(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-semibold text-gray-900">{selectedSupplier.name}</h2>
+                <span className={`badge ${selectedSupplier.isActive !== false ? 'badge-success' : 'badge-gray'}`}>
+                  {selectedSupplier.isActive !== false ? 'Active' : 'Inactive'}
+                </span>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-sm text-gray-500">Category</p>
+                  <p className="font-medium">{selectedSupplier.category}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500">Contact Name</p>
+                  <p className="font-medium">{selectedSupplier.contactName || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500">Email</p>
+                  <p className="font-medium">{selectedSupplier.email || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500">Phone</p>
+                  <p className="font-medium">{selectedSupplier.phone || '-'}</p>
+                </div>
+                <div className="col-span-2">
+                  <p className="text-sm text-gray-500">Address</p>
+                  <p className="font-medium">{selectedSupplier.address || '-'}</p>
+                </div>
+              </div>
+              {selectedSupplier.notes && (
+                <div>
+                  <p className="text-sm text-gray-500">Notes</p>
+                  <p className="text-gray-700">{selectedSupplier.notes}</p>
+                </div>
+              )}
+              {selectedSupplier.purchaseOrders?.length > 0 && (
+                <div>
+                  <p className="text-sm text-gray-500 mb-2">Purchase Orders ({selectedSupplier.purchaseOrders.length})</p>
+                  {selectedSupplier.purchaseOrders.map(po => (
+                    <div key={po.id} className="flex justify-between p-2 bg-gray-50 rounded mb-1">
+                      <span>{po.orderNumber}</span>
+                      <span className={`badge ${getStatusBadge(po.status)} text-xs`}>{po.status}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="p-6 border-t border-gray-200 flex justify-end gap-3">
+              <button onClick={() => setSelectedSupplier(null)} className="btn btn-secondary">Close</button>
+              <button onClick={() => { handleDeleteSupplier(selectedSupplier.id); setSelectedSupplier(null); }} className="btn btn-danger">Delete</button>
+              <button onClick={() => { handleEditSupplier(selectedSupplier); setSelectedSupplier(null); }} className="btn btn-primary">Edit</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Supplier Modal */}
       {showModal && modalType === 'supplier' && (
         <div className="modal-overlay">
@@ -455,11 +679,12 @@ export default function Suppliers() {
                   <label className="label">Company Name *</label>
                   <input
                     type="text"
-                    className="input"
+                    className={`input ${validationErrors.name ? 'border-red-500' : ''}`}
                     value={supplierForm.name}
                     onChange={(e) => setSupplierForm({...supplierForm, name: e.target.value})}
                     required
                   />
+                  {validationErrors.name && <p className="text-xs text-red-600 mt-1">{validationErrors.name}</p>}
                 </div>
                 <div>
                   <label className="label">Contact Name</label>
@@ -473,7 +698,7 @@ export default function Suppliers() {
                 <div>
                   <label className="label">Category *</label>
                   <select
-                    className="select"
+                    className={`select ${validationErrors.category ? 'border-red-500' : ''}`}
                     value={supplierForm.category}
                     onChange={(e) => setSupplierForm({...supplierForm, category: e.target.value})}
                     required
@@ -483,6 +708,7 @@ export default function Suppliers() {
                       <option key={cat.value} value={cat.value}>{cat.label}</option>
                     ))}
                   </select>
+                  {validationErrors.category && <p className="text-xs text-red-600 mt-1">{validationErrors.category}</p>}
                 </div>
                 <div>
                   <label className="label">Phone</label>
@@ -497,10 +723,11 @@ export default function Suppliers() {
                   <label className="label">Email</label>
                   <input
                     type="email"
-                    className="input"
+                    className={`input ${validationErrors.email ? 'border-red-500' : ''}`}
                     value={supplierForm.email}
                     onChange={(e) => setSupplierForm({...supplierForm, email: e.target.value})}
                   />
+                  {validationErrors.email && <p className="text-xs text-red-600 mt-1">{validationErrors.email}</p>}
                 </div>
                 <div className="col-span-2">
                   <label className="label">Address</label>
@@ -722,7 +949,6 @@ export default function Suppliers() {
             </div>
 
             <div className="p-6 space-y-6">
-              {/* PO Info */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div>
                   <p className="text-sm text-gray-500">Order Date</p>
@@ -744,11 +970,10 @@ export default function Suppliers() {
                 </div>
                 <div>
                   <p className="text-sm text-gray-500">Total Amount</p>
-                  <p className="font-medium text-lg">${selectedPO.totalAmount.toFixed(2)}</p>
+                  <p className="font-medium text-lg">${selectedPO.totalAmount?.toFixed(2)}</p>
                 </div>
               </div>
 
-              {/* Supplier Info */}
               {selectedPO.supplier && (
                 <div className="bg-gray-50 rounded-lg p-4">
                   <h3 className="font-medium text-gray-900 mb-2 flex items-center gap-2">
@@ -782,7 +1007,6 @@ export default function Suppliers() {
                 </div>
               )}
 
-              {/* Items */}
               <div>
                 <h3 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
                   <Package size={18} />
@@ -806,15 +1030,15 @@ export default function Suppliers() {
                             <td className="px-4 py-3 text-sm text-gray-900">{item.description}</td>
                             <td className="px-4 py-3 text-sm text-gray-900 text-right">{item.quantity}</td>
                             <td className="px-4 py-3 text-sm text-gray-500">{item.unit}</td>
-                            <td className="px-4 py-3 text-sm text-gray-900 text-right">${item.unitPrice.toFixed(2)}</td>
-                            <td className="px-4 py-3 text-sm text-gray-900 text-right font-medium">${item.total.toFixed(2)}</td>
+                            <td className="px-4 py-3 text-sm text-gray-900 text-right">${item.unitPrice?.toFixed(2)}</td>
+                            <td className="px-4 py-3 text-sm text-gray-900 text-right font-medium">${item.total?.toFixed(2)}</td>
                           </tr>
                         ))}
                       </tbody>
                       <tfoot className="bg-gray-50">
                         <tr>
                           <td colSpan="4" className="px-4 py-3 text-sm font-medium text-gray-900 text-right">Total:</td>
-                          <td className="px-4 py-3 text-sm font-bold text-gray-900 text-right">${selectedPO.totalAmount.toFixed(2)}</td>
+                          <td className="px-4 py-3 text-sm font-bold text-gray-900 text-right">${selectedPO.totalAmount?.toFixed(2)}</td>
                         </tr>
                       </tfoot>
                     </table>
@@ -824,7 +1048,6 @@ export default function Suppliers() {
                 )}
               </div>
 
-              {/* Notes */}
               {selectedPO.notes && (
                 <div>
                   <h3 className="font-medium text-gray-900 mb-2">Notes</h3>
@@ -859,6 +1082,8 @@ export default function Suppliers() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog {...confirmDialog} />
     </div>
   );
 }

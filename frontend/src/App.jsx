@@ -1,5 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { ToastProvider } from './context/ToastContext';
+import ErrorBoundary from './components/ErrorBoundary';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -18,6 +20,7 @@ import Guests from './pages/Guests';
 import Suppliers from './pages/Suppliers';
 import ClientPortal from './pages/ClientPortal';
 import CostEstimator from './pages/CostEstimator';
+import Profile from './pages/Profile';
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
@@ -35,35 +38,40 @@ function PrivateRoute({ children }) {
 
 function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/" element={
-            <PrivateRoute>
-              <Layout />
-            </PrivateRoute>
-          }>
-            <Route index element={<Dashboard />} />
-            <Route path="events" element={<Events />} />
-            <Route path="events/:id" element={<EventDetail />} />
-            <Route path="venues" element={<Venues />} />
-            <Route path="menus" element={<Menus />} />
-            <Route path="proposals" element={<Proposals />} />
-            <Route path="orders" element={<Orders />} />
-            <Route path="kitchen" element={<Kitchen />} />
-            <Route path="logistics" element={<Logistics />} />
-            <Route path="staff" element={<Staff />} />
-            <Route path="billing" element={<Billing />} />
-            <Route path="ai" element={<AIAssistant />} />
-            <Route path="guests" element={<Guests />} />
-            <Route path="suppliers" element={<Suppliers />} />
-            <Route path="client-portal" element={<ClientPortal />} />
-            <Route path="cost-estimator" element={<CostEstimator />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <ToastProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="/" element={
+                <PrivateRoute>
+                  <Layout />
+                </PrivateRoute>
+              }>
+                <Route index element={<Dashboard />} />
+                <Route path="events" element={<Events />} />
+                <Route path="events/:id" element={<EventDetail />} />
+                <Route path="venues" element={<Venues />} />
+                <Route path="menus" element={<Menus />} />
+                <Route path="proposals" element={<Proposals />} />
+                <Route path="orders" element={<Orders />} />
+                <Route path="kitchen" element={<Kitchen />} />
+                <Route path="logistics" element={<Logistics />} />
+                <Route path="staff" element={<Staff />} />
+                <Route path="billing" element={<Billing />} />
+                <Route path="ai" element={<AIAssistant />} />
+                <Route path="guests" element={<Guests />} />
+                <Route path="suppliers" element={<Suppliers />} />
+                <Route path="client-portal" element={<ClientPortal />} />
+                <Route path="cost-estimator" element={<CostEstimator />} />
+                <Route path="profile" element={<Profile />} />
+              </Route>
+            </Routes>
+          </BrowserRouter>
+        </ToastProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 
