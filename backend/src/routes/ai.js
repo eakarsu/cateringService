@@ -286,4 +286,138 @@ router.get('/features', async (req, res) => {
   ]);
 });
 
+// Menu optimization — analyzes a menu package vs event constraints and suggests changes.
+// Mechanical addition based on audit recommendation: "Menu optimization".
+router.post('/menu-optimize', async (req, res) => {
+  try {
+    const { menuPackageId, eventType, guestCount, dietaryRestrictions, budget, season } = req.body;
+
+    let pkg = null;
+    if (menuPackageId && req.prisma) {
+      try {
+        pkg = await req.prisma.menuPackage.findUnique({
+          where: { id: menuPackageId },
+          include: { items: true }
+        });
+      } catch (e) {
+        try {
+          pkg = await req.prisma.menuPackage.findUnique({ where: { id: menuPackageId } });
+        } catch (e2) {
+          pkg = null;
+        }
+      }
+    }
+
+    const systemPrompt = `You are an expert catering menu optimizer. Given an event and a menu package,
+suggest concrete changes (add/remove/swap items) that improve fit. Respond with strict JSON:
+{"summary": <string>, "add": [<item names>], "remove": [<item names>], "swap": [{"from": <name>, "to": <name>, "why": <string>}], "estimated_cost_delta_per_person": <number>, "warnings": [<strings>]}.
+No prose outside JSON.`;
+
+    const userPayload = {
+      menu_package: pkg,
+      event_type: eventType || null,
+      guest_count: guestCount || null,
+      dietary_restrictions: dietaryRestrictions || [],
+      budget: budget || null,
+      season: season || null
+    };
+
+    const aiResponse = await callOpenRouter(systemPrompt, JSON.stringify(userPayload, null, 2), {});
+    let parsed = null;
+    try {
+      const match = aiResponse.match(/\{[\s\S]*\}/);
+      parsed = match ? JSON.parse(match[0]) : null;
+    } catch (_) {
+      parsed = null;
+    }
+
+    res.json({ menuPackageId: menuPackageId || null, optimization: parsed || { raw: aiResponse } });
+  } catch (error) {
+    console.error('AI menu-optimize error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Proposal optimizer — takes an existing proposal and recommends positioning/pricing tweaks.
+// Mechanical addition based on audit recommendation: "Proposal optimization".
+router.post('/proposal-optimize', async (req, res) => {
+  try {
+    const { proposalId, competitiveContext, clientProfile } = req.body;
+
+    let proposal = null;
+    if (proposalId && req.prisma) {
+      try {
+        proposal = await req.prisma.proposal.findUnique({ where: { id: proposalId } });
+      } catch (_) {
+        proposal = null;
+      }
+    }
+
+    const systemPrompt = `You are an expert catering proposal optimizer. Given a draft proposal, suggest improvements
+to win-rate without unduly cutting margin. Respond with strict JSON:
+{"summary": <string>, "rewrite_sections": [{"section": <string>, "rewrite": <string>}], "pricing_adjustments": [{"line_item": <string>, "delta": <string>, "rationale": <string>}], "value_props_to_emphasize": [<strings>], "risk_warnings": [<strings>]}.
+No prose outside JSON.`;
+
+    const userPayload = {
+      proposal,
+      competitive_context: competitiveContext || null,
+      client_profile: clientProfile || null
+    };
+
+    const aiResponse = await callOpenRouter(systemPrompt, JSON.stringify(userPayload, null, 2), {});
+    let parsed = null;
+    try {
+      const match = aiResponse.match(/\{[\s\S]*\}/);
+      parsed = match ? JSON.parse(match[0]) : null;
+    } catch (_) {
+      parsed = null;
+    }
+
+    res.json({ proposalId: proposalId || null, optimization: parsed || { raw: aiResponse } });
+  } catch (error) {
+    console.error('AI proposal-optimize error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delivery routing — suggests an order for multi-stop delivery given stops and constraints.
+// Mechanical addition based on audit recommendation: "Delivery routing".
+router.post('/delivery-route', async (req, res) => {
+  try {
+    const { stops, vehicle, startAddress, returnToStart, eventStartTime } = req.body;
+
+    if (!Array.isArray(stops) || stops.length === 0) {
+      return res.status(400).json({ error: 'stops must be a non-empty array' });
+    }
+
+    const systemPrompt = `You are an expert catering logistics optimizer. Given a list of stops with addresses,
+service-window times, and load requirements, propose an order of visits that minimises total drive time
+while respecting service windows. Respond with strict JSON:
+{"order": [<stop ids in visit order>], "estimated_total_minutes": <number>, "stop_plan": [{"stop_id": <id>, "arrive": <hh:mm>, "depart": <hh:mm>, "notes": <string>}], "risk_warnings": [<strings>]}.
+No prose outside JSON.`;
+
+    const userPayload = {
+      start_address: startAddress || null,
+      return_to_start: !!returnToStart,
+      event_start_time: eventStartTime || null,
+      vehicle: vehicle || null,
+      stops
+    };
+
+    const aiResponse = await callOpenRouter(systemPrompt, JSON.stringify(userPayload, null, 2), {});
+    let parsed = null;
+    try {
+      const match = aiResponse.match(/\{[\s\S]*\}/);
+      parsed = match ? JSON.parse(match[0]) : null;
+    } catch (_) {
+      parsed = null;
+    }
+
+    res.json({ route: parsed || { raw: aiResponse } });
+  } catch (error) {
+    console.error('AI delivery-route error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;
