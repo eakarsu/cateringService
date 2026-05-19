@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   LayoutDashboard, Calendar, MapPin, UtensilsCrossed, FileText,
   ShoppingCart, ChefHat, Truck, Users, CreditCard, Bot, LogOut, Menu, X,
-  UserCheck, Building2, Calculator, User, Settings, Sparkles
+  UserCheck, Building2, Calculator, User, Settings, Sparkles, LayoutGrid
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -26,6 +26,7 @@ const bottomNavigation = [
   { name: 'Cost Estimator', to: '/cost-estimator', icon: Calculator },
   { name: 'AI Assistant', to: '/ai', icon: Bot },
   { name: 'AI Insights', to: '/ai-insights', icon: Sparkles },
+  { name: 'Catering Views', to: '/custom-views', icon: LayoutGrid },
   { name: 'Client Portal', to: '/client-portal', icon: User },
   { name: 'Profile & Settings', to: '/profile', icon: Settings },
 ];

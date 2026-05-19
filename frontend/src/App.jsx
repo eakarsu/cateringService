@@ -1,3 +1,4 @@
+import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
@@ -22,6 +23,7 @@ import Suppliers from './pages/Suppliers';
 import ClientPortal from './pages/ClientPortal';
 import CostEstimator from './pages/CostEstimator';
 import Profile from './pages/Profile';
+import CustomViewsPage from './pages/CustomViewsPage';
 
 // // === Batch 09 Gaps & Frontend Mounts ===
 const PredictiveMenuSuccessByClientProfileCuisineCfs = React.lazy(() => import('./pages/Batch09/PredictiveMenuSuccessByClientProfileCuisineCfs'));
@@ -87,6 +89,7 @@ function App() {
                 <Route path="client-portal" element={<ClientPortal />} />
                 <Route path="cost-estimator" element={<CostEstimator />} />
                 <Route path="profile" element={<Profile />} />
+                <Route path="custom-views" element={<CustomViewsPage />} />
               </Route>
             
       {/* // === Batch 09 Gaps & Frontend Mounts === */}

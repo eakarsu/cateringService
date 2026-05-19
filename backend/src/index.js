@@ -64,6 +64,7 @@ app.use('/api/photos', photoRoutes);
 app.use('/api/client', clientPortalRoutes);
 app.use('/api/costing', costingRoutes);
 app.use('/api/custom', require('./routes/customFeatures'));
+app.use('/api/custom-views', require('./routes/customViews'));
 
 // Serve uploaded photos
 const path = require('path');
