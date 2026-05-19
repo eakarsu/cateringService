@@ -63,6 +63,8 @@ app.use('/api/suppliers', supplierRoutes);
 app.use('/api/photos', photoRoutes);
 app.use('/api/client', clientPortalRoutes);
 app.use('/api/costing', costingRoutes);
+app.use('/api/custom', require('./routes/customFeatures'));
+app.use('/api/custom-views', require('./routes/customViews'));
 
 // Serve uploaded photos
 const path = require('path');
@@ -74,6 +76,10 @@ app.get('/api/health', (req, res) => {
 });
 
 // Global error handler (must be last)
+// // === Batch 09 Gaps & Frontend Mounts ===
+app.use('/api/gap-ai-cateringservice', require('./routes/batch09GapAi')); // // === Batch 09 Gaps & Frontend Mounts ===
+app.use('/api/gap-nonai-cateringservice', require('./routes/batch09GapNonai')); // // === Batch 09 Gaps & Frontend Mounts ===
+
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 3001;
@@ -87,3 +93,5 @@ process.on('SIGINT', async () => {
   await prisma.$disconnect();
   process.exit(0);
 });
+
+
