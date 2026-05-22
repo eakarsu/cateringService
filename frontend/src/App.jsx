@@ -25,6 +25,9 @@ import CostEstimator from './pages/CostEstimator';
 import Profile from './pages/Profile';
 import CustomViewsPage from './pages/CustomViewsPage';
 
+import CodexCustomVizFeature from './pages/CodexCustomVizFeature';
+import CodexOperationsFeature from './pages/CodexOperationsFeature';
+
 // // === Batch 09 Gaps & Frontend Mounts ===
 const PredictiveMenuSuccessByClientProfileCuisineCfs = React.lazy(() => import('./pages/Batch09/PredictiveMenuSuccessByClientProfileCuisineCfs'));
 const DynamicPricingDemandIngredientCostsSeasonCfs = React.lazy(() => import('./pages/Batch09/DynamicPricingDemandIngredientCostsSeasonCfs'));
@@ -65,6 +68,9 @@ function App() {
         <ToastProvider>
           <BrowserRouter>
             <Routes>
+        <Route path="/codex/custom-viz" element={<CodexCustomVizFeature />} />
+        <Route path="/codex/operations" element={<CodexOperationsFeature />} />
+
               <Route path="/login" element={<Login />} />
               <Route path="/" element={
                 <PrivateRoute>
