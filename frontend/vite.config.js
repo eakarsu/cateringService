@@ -18,11 +18,11 @@ export default defineConfig({
     strictPort: false,
     proxy: {
       '/api': {
-        target: 'http://localhost:5011',
+        target: 'http://localhost:5001',
         changeOrigin: true
       },
       '/uploads': {
-        target: 'http://localhost:5011',
+        target: 'http://localhost:5001',
         changeOrigin: true
       }
     }

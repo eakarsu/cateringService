@@ -1,0 +1,9 @@
+.git
+.env*
+!.env.example
+**/node_modules
+**/dist
+backend/prisma
+backend/uploads
+frontend/src/pages/Batch09
+*.log

@@ -131,7 +131,7 @@ export default function ClientPortal() {
               <li><strong>emily@nonprofit.org</strong> - Emily Davis (2 events)</li>
               <li><strong>lisa@corporate.com</strong> - Lisa Anderson (2 events)</li>
             </ul>
-            <p className="text-xs text-gray-500 mt-3">Password for all: <code className="bg-gray-100 px-1 rounded">password123</code></p>
+            <p className="text-xs text-gray-500 mt-3">Access is managed by your organization identity administrator.</p>
           </div>
         </div>
       </div>
