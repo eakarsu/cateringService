@@ -3,6 +3,12 @@ const bcrypt = require('bcryptjs');
 
 const prisma = new PrismaClient();
 
+function requireDemoPassword() {
+  const password = process.env.DEMO_PASSWORD || process.env.SEED_DEMO_PASSWORD || process.env.DEMO_SEED_PASSWORD || '';
+  if (password.length < 12 || password.length > 1024) throw new Error('DEMO_PASSWORD must contain 12-1024 characters');
+  return password;
+}
+
 async function main() {
   console.log('Seeding database with comprehensive data...');
 
@@ -50,7 +56,7 @@ async function main() {
   console.log('Cleanup complete.');
 
   // ==================== USERS (15+) ====================
-  const hashedPassword = await bcrypt.hash('password123', 10);
+  const hashedPassword = await bcrypt.hash(requireDemoPassword(), 10);
 
   const users = await Promise.all([
     prisma.user.upsert({ where: { email: 'admin@cateringpro.com' }, update: {}, create: { email: 'admin@cateringpro.com', password: hashedPassword, name: 'Admin User', role: 'ADMIN', phone: '555-0100' }}),
@@ -969,10 +975,10 @@ async function main() {
   console.log('============================================');
   console.log('');
   console.log('Test accounts:');
-  console.log('  Admin: admin@cateringpro.com / password123');
-  console.log('  Manager: sarah@cateringpro.com / password123');
-  console.log('  Client: john@smithwedding.com / password123');
-  console.log('  Staff: chef.alex@cateringpro.com / password123');
+  console.log('Demo login users provisioned from the local environment.');
+  console.log('Demo login users provisioned from the local environment.');
+  console.log('Demo login users provisioned from the local environment.');
+  console.log('Demo login users provisioned from the local environment.');
   console.log('');
 }
 
