@@ -54,6 +54,16 @@ function createCommerceApp({config,pool,providers}) {
   app.get('/api/session',(req,res)=>res.json({user:req.principal}));
   app.get('/api/auth/me',(req,res)=>res.json({user:req.principal}));
 
+  app.post('/api/runtime-ai/readiness',async(req,res,next)=>{try{
+    const prompt=String(req.body?.prompt||'').trim();if(!prompt)return res.status(400).json({error:'Prompt is required'});
+    const apiKey=process.env.OPENROUTER_API_KEY,model=process.env.OPENROUTER_MODEL,baseUrl=process.env.OPENROUTER_BASE_URL;
+    if(!apiKey||!model||!baseUrl)throw problem(503,'OpenRouter runtime is not configured');
+    const provider=await fetch(`${baseUrl.replace(/\/$/,'')}/chat/completions`,{method:'POST',headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},body:JSON.stringify({model,temperature:0.2,messages:[{role:'system',content:'You are a catering operations reviewer. Return concise risks, evidence gaps, next actions, uncertainty, and required human review.'},{role:'user',content:prompt}]})});
+    if(!provider.ok)throw problem(502,`OpenRouter returned ${provider.status}`);const payload=await provider.json();const output=String(payload?.choices?.[0]?.message?.content||'').trim();if(!output)throw problem(502,'OpenRouter returned an empty response');
+    const saved=await pool.query(`INSERT INTO catering_ai_results(tenant_id,actor_subject,feature,input,output,model)VALUES($1,$2,'readiness',$3,$4,$5)RETURNING id`,[req.principal.tenantId,req.principal.subject,{prompt},output,model]);
+    res.json({id:saved.rows[0].id,response:output,model,provider:'openrouter'});
+  }catch(e){next(e);}});
+
   app.get('/api/commerce/inventory',async(req,res,next)=>{try{
     const params=[req.principal.tenantId];let where='tenant_id=$1';
     if(req.principal.role==='merchant'){params.push(req.principal.subject);where+=' AND merchant_subject=$2';}
